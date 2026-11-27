@@ -28,6 +28,8 @@ export interface Cloud {
   /** Faux si aucun service en ligne n'est configuré pour cet environnement. */
   enabled: boolean;
   email?: string;
+  /** Vrai pendant la vérification de la session au démarrage (avant de savoir si la personne est connectée). */
+  checking: boolean;
   status: SyncStatus;
   /** Nombre d'événements pas encore envoyés. */
   pending: number;
@@ -42,6 +44,10 @@ export interface Cloud {
   syncNow: () => void;
 }
 
+const ACCOUNT_KEY = 'codes-africa-account';
+const remembered = () => { try { return localStorage.getItem(ACCOUNT_KEY) ?? undefined; } catch { return undefined; } };
+const remember = (v?: string) => { try { if (v) localStorage.setItem(ACCOUNT_KEY, v); else localStorage.removeItem(ACCOUNT_KEY); } catch { /* indisponible */ } };
+
 const explain = (e: unknown): string => {
   if (e instanceof ApiError) {
     if (e.status === 401) return 'La session a expiré. Reconnectez-vous.';
@@ -55,6 +61,7 @@ const authError = (m?: string) => {
   if (/already exists|user_already_exists/i.test(m)) return 'Un compte existe déjà avec cette adresse. Connectez-vous.';
   if (/password.*(short|least)/i.test(m)) return 'Mot de passe trop court (8 caractères au moins).';
   if (/fetch|network/i.test(m)) return 'Pas de connexion internet. Réessayez une fois en ligne.';
+  if (/invalid.origin/i.test(m)) return 'Cette adresse de la plateforme n’est pas autorisée à se connecter. Prévenez l’administrateur.';
   return m;
 };
 
@@ -75,7 +82,11 @@ export function useCloudSync<M, D>(opts: {
   /** Identifiants des événements présents sur l'appareil. */
   localIds: () => string[];
 }): Cloud {
-  const [email, setEmail] = useState<string>();
+  /* Dernier compte connecté sur cet appareil : la session reste ouverte hors connexion (plateforme hors ligne d'abord).
+     Ce n'est que l'adresse e-mail, jamais un mot de passe ni un jeton. */
+  const [email, setEmailState] = useState<string | undefined>(() => remembered());
+  const setEmail = (v: string | undefined) => { remember(v); setEmailState(v); };
+  const [checking, setChecking] = useState(() => !!authClient && !remembered());
   const [online, setOnline] = useState(() => navigator.onLine);
   const [busy, setBusy] = useState(false);
   const [lastSync, setLastSync] = useState<Date>();
@@ -88,7 +99,14 @@ export function useCloudSync<M, D>(opts: {
 
   useEffect(() => {
     if (!authClient) return;
-    authClient.getSession().then(({ data }) => setEmail(data?.user?.email ?? undefined)).catch(() => undefined);
+    authClient.getSession()
+      .then(({ data, error: e }) => {
+        if (data?.user?.email) setEmail(data.user.email);
+        // Réponse claire du serveur « aucune session » : déconnecté. Sans réponse (hors connexion), on garde le dernier compte.
+        else if (!e && navigator.onLine) setEmail(undefined);
+      })
+      .catch(() => undefined)
+      .finally(() => setChecking(false));
     const up = () => setOnline(true), down = () => setOnline(false);
     window.addEventListener('online', up);
     window.addEventListener('offline', down);
@@ -236,6 +254,7 @@ export function useCloudSync<M, D>(opts: {
   return {
     enabled: neonEnabled,
     email,
+    checking,
     status,
     pending,
     lastSync,
@@ -266,6 +285,9 @@ export function useCloudSync<M, D>(opts: {
         // 3. Activation de l'accès avec le lien.
         await activateInvitation(token);
         fullPull();
+        // Le lien a servi : on le retire de l'adresse avant d'ouvrir la plateforme (sinon il serait relu, déjà utilisé).
+        const u = new URL(window.location.href);
+        if (u.searchParams.has('invitation')) { u.searchParams.delete('invitation'); window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash); }
         setEmail(address);
         return undefined;
       } catch (e) {

@@ -4,6 +4,7 @@ import { AlertTriangle, Check, ChevronRight, Copy, KeyRound, Link2, LogIn, LogOu
 import { ApiError, ROLE_LABELS, addMember, changePassword, checkInvitation, getMe, listMembers, removeMember, renewInvitation, setMyName, updateMember, type Invitation, type Me, type Member, type NewUser, type Role } from '../cloud/neon';
 import { useEvents } from '../events';
 import { Field, Shell, input } from './WmtModals';
+import EnvBanner from './EnvBanner';
 
 /* Espace utilisateur (bandeau) : avatar avec un point d'état de la synchronisation. Un clic ouvre le menu :
    Paramètres (nom, mot de passe), Synchronisation et déconnexion.
@@ -599,5 +600,63 @@ function InviteSentModal({ inv, phone, onClose }: { inv: Invitation; phone: stri
         <p className="text-xs text-ink-500 text-center">Aucun numéro de téléphone renseigné : envoi WhatsApp impossible.</p>
       )}
     </Shell>
+  );
+}
+
+/** Écran de connexion obligatoire : rien de la plateforme n'est visible avant d'être connecté.
+    Le lien d'activation reçu (?invitation=…) ouvre directement le choix du mot de passe. */
+export function LoginScreen() {
+  const { cloud } = useEvents();
+  const [token, setToken] = useState(() => new URLSearchParams(window.location.search).get('invitation') ?? '');
+  const endActivation = () => {
+    const u = new URL(window.location.href); u.searchParams.delete('invitation');
+    window.history.replaceState(window.history.state, '', u.pathname + u.search + u.hash);
+    setToken('');
+  };
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState<string>();
+  const [busy, setBusy] = useState(false);
+  const go = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!email.trim() || !password) { setError('Saisissez votre adresse e-mail et votre mot de passe.'); return; }
+    setBusy(true);
+    const err = await cloud.signIn(email, password);
+    setBusy(false);
+    if (err) setError(err); else setPassword('');
+  };
+  return (
+    <div className="min-h-screen flex flex-col bg-[var(--sand)]">
+      <EnvBanner />
+      <div className="relative overflow-hidden bg-[#000b10] text-white">
+        <div className="pattern bg-[#2a98b8] opacity-[0.084]" />
+        <div className="relative max-w-md mx-auto px-6 pt-10 pb-8">
+          <div className="font-display leading-none tracking-wide text-4xl">CODES Africa</div>
+          <div className="eyebrow text-white/70 mt-2">Planning event</div>
+        </div>
+      </div>
+      <div className="chevron-band shrink-0" style={{ height: 12 }} />
+      <main className="flex-1 px-4 py-8">
+        <form onSubmit={go} className="max-w-md mx-auto bg-white rounded-3xl ring-1 ring-ink-200 p-6 sm:p-8 space-y-4" aria-labelledby="login-title">
+          <div>
+            <h1 id="login-title" className="font-display text-3xl tracking-wide text-brand-950">Se connecter</h1>
+            <p className="text-sm text-ink-500 mt-1">Connectez-vous pour accéder à la plateforme.</p>
+          </div>
+          <Field label="Adresse e-mail" required>
+            <input type="email" inputMode="email" autoComplete="username" autoFocus className={input(error)} value={email}
+              onChange={(e) => { setEmail(e.target.value); setError(undefined); }} />
+          </Field>
+          <Field label="Mot de passe" required error={error}>
+            <input type="password" autoComplete="current-password" className={input(error)} value={password}
+              onChange={(e) => { setPassword(e.target.value); setError(undefined); }} />
+          </Field>
+          <button type="submit" disabled={busy} className="w-full flex items-center justify-center gap-2 h-11 rounded-xl text-sm font-semibold bg-brand-500 text-white hover:bg-brand-600 disabled:opacity-60">
+            <LogIn size={16} /> {busy ? 'Un instant…' : 'Se connecter'}
+          </button>
+          <p className="text-xs text-ink-500"><strong className="text-ink-700">Vous avez été invité ?</strong> Ouvrez le lien d’activation reçu par e-mail ou WhatsApp pour choisir votre mot de passe. Accès sur invitation uniquement : seul l’administrateur ajoute les utilisateurs.</p>
+        </form>
+      </main>
+      {createPortal(<ActivateModal open={!!token} token={token} onClose={endActivation} />, document.body)}
+    </div>
   );
 }
