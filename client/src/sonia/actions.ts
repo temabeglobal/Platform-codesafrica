@@ -104,14 +104,14 @@ export const ACTIONS: Record<string, Def> = {
     },
   },
   changer_evenement: {
-    description: 'Change l’événement actif (pour travailler sur un autre événement), désigné par son nom exact.',
+    description: 'Ouvre un autre événement pour y travailler (change l’événement actif), désigné par son nom exact. Jamais pour supprimer : supprimer_evenement agit directement sur n’importe quel événement de la liste, sans l’ouvrir.',
     parameters: obj({ name: str('Nom exact de l’événement (liste « evenements »)') }, ['name']),
     summary: (a, s) => `Ouvrir l’événement « ${findOne(s.events, (e) => e.name, a.name, 'Événement').name} ».`,
     run: (a, s) => s.select(findOne(s.events, (e) => e.name, a.name, 'Événement').id),
   },
 
   supprimer_evenement: {
-    description: 'Supprime un événement entier (tâches, budget, contacts, programme, badges… compris), désigné par son nom exact. Il disparaît pour toute l’équipe.',
+    description: 'Supprime un ÉVÉNEMENT entier de la liste « evenements » (tâches, budget, contacts, programme, badges… compris), désigné par son nom exact. Il disparaît pour toute l’équipe. Dès que la demande dit « l’événement … », c’est cet outil, même si un programme porte le même nom.',
     parameters: obj({ name: str('Nom exact de l’événement (liste « evenements »)') }, ['name']),
     summary: (a, s) => {
       const e = findOne(s.events, (x) => x.name, a.name, 'Événement');
@@ -534,7 +534,7 @@ export const ACTIONS: Record<string, Def> = {
     },
   },
   supprimer_programmes_wmt: {
-    description: 'Supprime des programmes Women in MiningTech ou Academy (avec leurs participantes et leurs sessions), désignés par leur nom exact.',
+    description: 'Supprime des PROGRAMMES de mentorat ou de formation à l’intérieur de l’événement actif (liste wmt.programs), avec leurs participantes et leurs sessions. Jamais pour supprimer un événement : si la demande dit « l’événement … », utiliser supprimer_evenement.',
     parameters: obj({ names: list({ type: 'string' }, 'Noms exacts des programmes (wmt.programs)') }, ['names']),
     summary: (a, s) => {
       const found = (a.names ?? []).map((n: unknown) => findOne(s.data.wmt.programs, (p) => p.name, n, 'Programme', 'la page Women in MiningTech'));

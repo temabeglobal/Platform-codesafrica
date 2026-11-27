@@ -484,7 +484,7 @@ const finalReminder = (q: string, withTools: boolean) => [
    les outils : la personne doit alors redemander. Dans ces cas, on lui redemande aussitôt, avec un appel d'outil obligatoire. */
 const ACTION_VERB = /\b(ajout\w*|cr[ée]+\w*|mets?|mettre|met[st]?ez|inscri\w*|enregistr\w*|supprim\w*|enl[eè]v\w*|retir\w*|modifi\w*|chang\w*|remplac\w*|d[ée]plac\w*|renomm\w*|programm\w*|planifi\w*|assign\w*|attribu\w*|affect\w*|marqu\w*|note[rz]?|fais|faites|g[ée]n[èée]r\w*|pr[ée]par\w*|add|create|remove|delete|change|update|put|set)\b/i;
 const YES = /^\s*(oui|ouais|ok|okay|d'?accord|vas-?y|allez-?y|fais-?le|faites-?le|go|confirm\w*|exact\w*|c'?est ([çc]a|bon|parfait)|parfait|yes|sure|bien s[uû]r|absolument|volontiers)\b/i;
-const ASKS_OK = /(souhaitez|voulez|voudriez|d[ée]sirez)-vous que je|(dois|puis)-je|je peux (le|la|les|vous)?\s*\w*\s*si vous|confirmez|est-ce que je (cr[ée]e|ajoute|mets)|voulez-vous que|souhaitez-vous (cr[ée]er|ajouter|que)|autoris|je (vous )?propose|voici (les|ce que)|valider/i;
+const ASKS_OK = /(souhaitez|voulez|voudriez|d[ée]sirez)-vous que je|(dois|puis)-je|je peux (le|la|les|vous)?\s*\w*\s*si vous|confirmez|est-ce que je (cr[ée]e|ajoute|mets)|voulez-vous que|souhaitez-vous (cr[ée]er|ajouter|que)|autoris|je (vous )?propose|voici (les|ce que)|valider|\bje (vous |l[ae'] ?|les )?(vais |peux )?(programm|planifi|cr[ée]|ajout|supprim|retir|enl[eè]v|mets|met |modifi|chang|enregistr|inscri|note|pr[ée]par)/i;
 const mustAct = (q: string, reply: string, history: Turn[]) => {
   if (/voulez-vous dire|lequel|laquelle|lesquel|pr[ée]cis(ez|er)|quel(le)?s? (est|sont|format|cat[ée]gorie|date|jour)/i.test(reply) && !ASKS_OK.test(reply)) return false;
   const lastSonia = [...history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
