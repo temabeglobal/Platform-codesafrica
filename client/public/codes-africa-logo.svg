@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 330 72" role="img" aria-labelledby="title desc">
+  <title id="title">CODES Africa</title>
+  <desc id="desc">CODES Africa logo</desc>
+  <g transform="translate(2 2)">
+    <rect width="68" height="68" rx="15" fill="#070b12"/>
+    <path d="M21 19h28a5 5 0 0 1 5 5v24a5 5 0 0 1-5 5H21a5 5 0 0 1-5-5V24a5 5 0 0 1 5-5Z" fill="none" stroke="#33b6d6" stroke-width="3"/>
+    <circle cx="35" cy="36" r="8" fill="#00cdaa"/>
+    <path d="M25 36h-6M51 36h-6M35 26v-6M35 52v-6" stroke="#33b6d6" stroke-width="3" stroke-linecap="round"/>
+  </g>
+  <text x="86" y="43" fill="#10283a" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" letter-spacing="1.5">CODES</text>
+  <text x="205" y="43" fill="#0088a8" font-family="Arial, Helvetica, sans-serif" font-size="27" font-weight="700" letter-spacing="1.5">AFRICA</text>
+</svg>

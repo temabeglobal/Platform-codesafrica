@@ -1,0 +1,33 @@
+{
+  "name": "platform-codesafrica-neon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:migrate": "tsx --env-file=.env.local api/migrate.ts",
+    "typecheck": "tsc --noEmit -p api",
+    "neon:deploy": "sh -c 'set -a; . ./.env.local; set +a; npx -y neon@latest deploy --env .env.local'",
+    "db:add-member": "tsx --env-file=.env.local api/add-member.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.1178.0",
+    "@aws-sdk/s3-presigned-post": "^3.1178.0",
+    "@aws-sdk/s3-request-presigner": "^3.1178.0",
+    "@neon/ai-sdk-provider": "^1.6.0",
+    "@neon/config": "^1.14.8",
+    "@neon/env": "^2.1.11",
+    "@neon/functions": "^0.11.0",
+    "@neon/realtime": "^0.2.2",
+    "ai": "^7.0.183",
+    "files-sdk": "^3.2.1",
+    "hono": "^4.13.22",
+    "jose": "^6.2.18",
+    "pg": "^8.23.1",
+    "ws": "^8.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.11",
+    "@types/pg": "^8.23.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  }
+}

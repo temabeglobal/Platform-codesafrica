@@ -1,0 +1,117 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { --sand: #f5f7fa; } /* fond du site CODES Africa */
+body { background: var(--sand); @apply text-ink-900 font-sans antialiased; margin: 0; }
+
+/* Motif africain : les lignes blanches prennent la couleur voulue, le fond noir est transparent. */
+.pattern {
+  position: absolute; inset: 0; pointer-events: none;
+  -webkit-mask-image: url('/patterns/masks.webp'); mask-image: url('/patterns/masks.webp');
+  -webkit-mask-mode: luminance; mask-mode: luminance;
+  -webkit-mask-size: 380px; mask-size: 380px;
+}
+.pattern-sm { -webkit-mask-size: 220px; mask-size: 220px; }
+.chevron-band {
+  height: 22px; background-color: #00a3cc;
+  -webkit-mask-image: url('/patterns/chevron.png'); mask-image: url('/patterns/chevron.png');
+  -webkit-mask-mode: luminance; mask-mode: luminance;
+  -webkit-mask-size: auto 100%; mask-size: auto 100%;
+  -webkit-mask-repeat: repeat-x; mask-repeat: repeat-x;
+}
+/* Carte douce, très arrondie, sans bordure. */
+.tile { @apply bg-white rounded-[28px] shadow-[0_1px_0_rgba(1,33,43,.04),0_12px_32px_-16px_rgba(1,33,43,.25)]; }
+/* Motif africain PERMANENT derrière le contenu de tous les carrés.
+   Au survol : le motif zoome ; les carrés cliquables grossissent légèrement avec une ombre. */
+.tile, .tile-fx {
+  position: relative; isolation: isolate; overflow: hidden;
+  transition: transform .3s ease, box-shadow .3s ease;
+}
+.tile { --fx-o: .09; }      /* carrés blancs : motif discret pour garder le texte lisible */
+.tile-fx { --fx-o: .2; }    /* carrés colorés : motif plus présent */
+.tile::before, .tile-fx::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  opacity: var(--fx-o); transform: scale(1); transform-origin: center;
+  transition: transform .5s ease, opacity .3s ease;
+  background-color: var(--fx, #d4a83f);
+  -webkit-mask-image: url('/patterns/masks.webp'); mask-image: url('/patterns/masks.webp');
+  -webkit-mask-mode: luminance; mask-mode: luminance;
+  -webkit-mask-size: 220px; mask-size: 220px;
+}
+/* Au survol, le motif zoome derrière TOUS les carrés (les plaques claires gardent le texte lisible). */
+.tile:hover::before, .tile-fx:hover::before,
+:is(a, button):is(.tile, .tile-fx):focus-visible::before { transform: scale(1.18); opacity: calc(var(--fx-o) + .06); }
+
+/* Motif plus fin pour les petits éléments (boutons). */
+.fx-sm::before { -webkit-mask-size: 120px; mask-size: 120px; }
+
+/* Plaque claire posée sur le motif, derrière les lignes de texte. */
+.plate { @apply bg-white/90 rounded-2xl ring-1 ring-ink-100; backdrop-filter: blur(2px); }
+
+/* Zoom + ombre réservés aux carrés cliquables (souris et clavier). */
+:is(a, button):is(.tile, .tile-fx):is(:hover, :focus-visible) {
+  transform: scale(1.025);
+  box-shadow: 0 24px 48px -16px rgba(1, 33, 43, .5), 0 0 0 2px rgba(0, 163, 204, .7);
+  outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tile, .tile-fx, .tile::before, .tile-fx::before { transition: none; }
+  :is(a, button):is(.tile, .tile-fx):is(:hover, :focus-visible),
+  .tile:hover::before, .tile-fx:hover::before { transform: none; }
+}
+
+.eyebrow { @apply text-[11px] uppercase tracking-[0.22em] font-semibold; }
+
+/* ——— Sonia : mouvements lents et doux (courbe « ease-out » longue, jamais d'à-coup) ——— */
+@keyframes sonia-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.035); } }
+@keyframes sonia-halo { 0%, 100% { opacity: .35; transform: scale(1); } 50% { opacity: .75; transform: scale(1.14); } }
+@keyframes sonia-rise { from { opacity: 0; transform: translate3d(0, 14px, 0) scale(.985); } to { opacity: 1; transform: none; } }
+@keyframes sonia-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+@keyframes sonia-shimmer { from { background-position: -200% 0; } to { background-position: 200% 0; } }
+
+.sonia-breathe { animation: sonia-breathe 6s ease-in-out infinite; }
+.sonia-halo { animation: sonia-halo 4.8s ease-in-out infinite; background: radial-gradient(circle, rgba(212,168,63,.55) 0%, rgba(212,168,63,0) 70%); }
+.sonia-rise { animation: sonia-rise .55s cubic-bezier(.22, 1, .36, 1) both; }
+.sonia-dot { animation: sonia-dot 1.3s ease-in-out infinite; }
+.sonia-ring { background: conic-gradient(from 210deg, #33b6d6, #0088a8, #99dceb, #00a3cc, #33b6d6); }
+.sonia-name { background: linear-gradient(90deg, #66c9e0, #e6f7fb, #66c9e0); background-size: 200% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: sonia-shimmer 7s linear infinite; }
+
+/* Petit mouvement pour attirer l'attention : un saut léger et un balancement, puis plus rien. */
+@keyframes sonia-nudge {
+  0%, 100% { transform: none; }
+  12% { transform: translateY(-9px) rotate(-6deg); }
+  26% { transform: translateY(0) rotate(5deg); }
+  38% { transform: translateY(-5px) rotate(-3deg); }
+  52% { transform: translateY(0) rotate(2deg); }
+  66% { transform: rotate(-1deg); }
+}
+.sonia-nudge { animation: sonia-nudge 1.5s cubic-bezier(.36,.07,.19,.97) both; }
+@keyframes sonia-wave { 0%, 100% { height: 4px; } 50% { height: 14px; } }
+@keyframes sonia-mic-pulse { 0% { box-shadow: 0 0 0 0 rgba(212,168,63,.55); } 100% { box-shadow: 0 0 0 10px rgba(212,168,63,0); } }
+.sonia-wave { animation: sonia-wave .9s ease-in-out infinite; }
+.sonia-mic-pulse { animation: sonia-mic-pulse 1.4s ease-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .sonia-breathe, .sonia-halo, .sonia-rise, .sonia-dot, .sonia-name, .sonia-wave, .sonia-mic-pulse, .sonia-nudge { animation: none; }
+}
+
+
+/* Petite poussée de la flèche « autres menus », deux fois à l'ouverture. */
+@keyframes nudge { 0%, 100% { transform: translateX(0); } 50% { transform: translateX(4px); } }
+@media (prefers-reduced-motion: reduce) { [class*='animate-[nudge'] { animation: none; } }
+
+/* Accréditations : planche d'impression des badges (9 × 13,5 cm, 4 par page A4). Invisible à l'écran. */
+.badge-print { display: none; }
+.badge-card { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+@media print {
+  @page { size: A4 portrait; margin: 10mm; }
+  body { background: #fff !important; }
+  body > :not(.badge-print) { display: none !important; }
+  .badge-print { display: grid !important; grid-template-columns: repeat(2, 90mm); gap: 4mm 6mm; justify-content: center; }
+  .badge-print-card { width: 90mm; break-inside: avoid; page-break-inside: avoid; }
+  .badge-print-card > div { border-radius: 3mm; box-shadow: none; outline: 0.2mm dashed #a8b5c2; outline-offset: 0; --tw-ring-shadow: 0 0 #0000; }
+}
+
+/* Badge / barre d'outils que Netlify ajoute aux sites hébergés gratuitement : il recouvrait le bouton de Sonia. */
+#nl-badge-frame { display: none !important; }

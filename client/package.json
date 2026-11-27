@@ -1,0 +1,34 @@
+{
+  "name": "platform-codesafrica-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "build:test": "VITE_APP_ENV=test VITE_NEON_LOCAL_AUTH_URL= VITE_NEON_LOCAL_API_URL= VITE_NEON_LOCAL_REALTIME_URL= VITE_NEON_PROD_AUTH_URL= VITE_NEON_PROD_API_URL= VITE_NEON_PROD_REALTIME_URL= npm run build",
+    "build:prod": "VITE_APP_ENV=production VITE_NEON_LOCAL_AUTH_URL= VITE_NEON_LOCAL_API_URL= VITE_NEON_LOCAL_REALTIME_URL= VITE_NEON_TEST_AUTH_URL= VITE_NEON_TEST_API_URL= VITE_NEON_TEST_REALTIME_URL= npm run build"
+  },
+  "dependencies": {
+    "@neon/auth": "^0.8.2",
+    "@neon/realtime": "^0.2.2",
+    "fflate": "0.8.3",
+    "lucide-react": "^0.446.0",
+    "qrcode-generator": "2.0.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2",
+    "write-excel-file": "^4.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.5",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.18",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.5.3",
+    "vite": "^5.4.2"
+  }
+}

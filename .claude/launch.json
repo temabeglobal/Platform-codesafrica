@@ -1,0 +1,4 @@
+{ "version": "0.0.1", "configurations": [
+  { "name": "client-local", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "client", "run", "dev", "--", "--strictPort"], "port": 5181 },
+  { "name": "client-preview", "runtimeExecutable": "npm", "runtimeArgs": ["--prefix", "client", "run", "preview", "--", "--port", "5181", "--strictPort"], "port": 5181 }
+] }
