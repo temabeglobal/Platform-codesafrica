@@ -111,7 +111,7 @@ export default function Dashboard() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="font-medium truncate">{t.title}</div>
-                  <div className="text-xs text-ink-500">{t.owner} · {fmtDate(t.due)}</div>
+                  <div className="text-xs text-ink-500">{t.owner ? `${t.owner} · ` : ''}{fmtDate(t.due)}</div>
                 </div>
                 {lateNow && <span className="text-xs font-semibold text-red-700">En retard</span>}
               </Link></li>

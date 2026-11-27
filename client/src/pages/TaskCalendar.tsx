@@ -193,7 +193,7 @@ export default function TaskCalendarView() {
                     <div className="min-w-0 flex-1">
                       <div className={`font-semibold truncate group-hover:underline ${e.done ? 'line-through text-ink-500' : ''}`}>{t.title}</div>
                       <div className="text-xs text-ink-500">
-                        {d.label} · {t.owner}{t.dependsOn && ` · après « ${t.dependsOn} »`}
+                        {d.label}{t.owner && ` · ${t.owner}`}{t.dependsOn && ` · après « ${t.dependsOn} »`}
                       </div>
                       <div className="h-1.5 rounded-full bg-ink-100 mt-2 max-w-xs overflow-hidden"><div className="h-full bg-brand-500 rounded-full" style={{ width: `${t.progress}%` }} /></div>
                     </div>

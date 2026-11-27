@@ -1,6 +1,6 @@
 import { useState, type KeyboardEvent } from 'react';
 import { Link, Navigate, useParams } from 'react-router-dom';
-import { ArrowLeft, Check, ChevronDown, FolderInput, FolderPlus, GripVertical, Link2, Pencil, Plus, Trash2, Ungroup, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronDown, FolderInput, FolderPlus, GripVertical, Link2, Pencil, Plus, Trash2, Ungroup, UsersRound, X } from 'lucide-react';
 import EventSwitcher from '../components/EventSwitcher';
 import { useEvents } from '../events';
 import { allSubtasks, fmtDate, isLate, uid, type Phase, type Subtask, type Task } from '../demo';
@@ -37,6 +37,7 @@ export default function TaskDetail() {
     if (!sub) return t;
     return { ...t, phases: t.phases.map((p) => (p.id === phaseId ? { ...p, subtasks: p.subtasks.filter((x) => x.id !== subId) } : p)), loose: [...(t.loose ?? []), sub] };
   });
+  const team = data.teams.find((x) => x.id === task.team);
   const done = all.filter((s) => s.done).length;
   const late = isLate(task);
 
@@ -57,10 +58,21 @@ export default function TaskDetail() {
         <EventSwitcher />
       </div>
 
-      <div className="eyebrow text-brand-800">{fmtDate(task.due)} · {task.owner}</div>
+      <div className="eyebrow text-brand-800">{fmtDate(task.due)}{task.owner && ` · ${task.owner}`}</div>
       <h1 className="font-display text-4xl md:text-5xl leading-[0.95] tracking-wide mt-2">{task.title}</h1>
       <div className="flex flex-wrap items-center gap-3 mt-3 mb-8">
         <span className={`text-xs font-semibold px-3 py-1.5 rounded-full ${late ? 'bg-red-100 text-red-800' : task.status === 'Terminée' ? 'bg-accent-400/25 text-accent-700' : 'bg-ink-100 text-ink-700'}`}>{late ? 'En retard' : task.status}</span>
+        {/* Équipe chargée de la tâche : modifiable ici (les équipes viennent du menu Équipe). */}
+        <label className={`relative flex items-center gap-1.5 text-xs font-semibold pl-3 pr-8 py-1.5 rounded-full ${team ? 'bg-brand-50 text-brand-800' : 'bg-amber-50 text-amber-800 ring-1 ring-amber-200'}`}>
+          <UsersRound size={14} />
+          <span className="sr-only">Équipe</span>
+          <select value={team ? task.team : ''} onChange={(e) => change((t) => ({ ...t, team: e.target.value || undefined }))}
+            disabled={!data.teams.length} className="appearance-none bg-transparent outline-none cursor-pointer" aria-label="Équipe chargée de la tâche">
+            <option value="">{data.teams.length ? 'Choisir une équipe' : 'Aucune équipe (menu Équipe)'}</option>
+            {data.teams.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+          </select>
+          <ChevronDown size={13} className="absolute right-3 pointer-events-none" />
+        </label>
         {task.dependsOn && <span className="text-sm text-ink-500 flex items-center gap-1"><Link2 size={14} /> Après : {task.dependsOn}</span>}
       </div>
 

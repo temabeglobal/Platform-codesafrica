@@ -30,6 +30,8 @@ export interface Subtask { id: string; title: string; done: boolean }
 export interface Phase { id: string; title: string; subtasks: Subtask[] }
 export interface Task {
   id: string; title: string; owner: string; due: string; progress: number; dependsOn?: string; status: TaskStatus; phases: Phase[];
+  /** Équipe chargée de la tâche (identifiant d'une équipe du menu Équipe de l'événement). */
+  team?: string;
   /** Sous-tâches rangées dans aucune phase (comme les « Tâches sans phase » de Timly). */
   loose?: Subtask[];
 }
@@ -69,7 +71,7 @@ type RawTeam = { name: string; lead: string; members: Omit<TeamMember, 'id'>[] }
 /** Statut de paiement d'une dépense : payée en totalité, ou avance (acompte) versée. */
 export const paymentStatuses = ['Payé', 'Avance'] as const;
 export type PaymentStatus = (typeof paymentStatuses)[number];
-export interface Expense { id: string; label: string; /** Prix total = quantité × prix unitaire. */ amount: number; qty?: number; unitPrice?: number; date: string; payment?: PaymentStatus; /** Date du paiement ou de l'avance. */ paidOn?: string }
+export interface Expense { id: string; label: string; /** Prix total = quantité × prix unitaire. */ amount: number; qty?: number; unitPrice?: number; date: string; payment?: PaymentStatus; /** Date du paiement ou de l'avance. */ paidOn?: string; /** Prestataire payé (id d'un prestataire du menu Prestataires), facultatif. */ provider?: string }
 /** Statut et date de paiement, avec des valeurs par défaut pour les anciennes dépenses. */
 export const paymentOf = (e: Expense) => ({ status: e.payment ?? 'Payé', on: e.paidOn ?? e.date });
 /** Quantité et prix unitaire (une dépense ancienne sans détail compte pour 1 × son montant). */

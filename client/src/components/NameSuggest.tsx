@@ -7,7 +7,7 @@ import type { Team } from '../demo';
 
 export interface NameOption { name: string; detail: string }
 
-const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+export const norm = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 const TITLES = new Set(['m', 'mme', 'mlle', 'dr', 'pr', 'me']);
 
 /** Tous les noms de l'onglet Équipe, sans doublon. `peopleOnly` : les personnes seulement, sans les équipes. */
@@ -46,9 +46,12 @@ interface Props {
   label?: string;
   /** Icône des suggestions (par défaut : des personnes). */
   icon?: LucideIcon;
+  /** Montre toute la liste quand le champ est vide (au clic), au lieu d'attendre la première lettre. */
+  showAll?: boolean;
+  disabled?: boolean;
 }
 
-export default function NameSuggest({ value, onChange, options, className, placeholder, label, icon: Icon = Users }: Props) {
+export default function NameSuggest({ value, onChange, options, className, placeholder, label, icon: Icon = Users, showAll, disabled }: Props) {
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const [pos, setPos] = useState<CSSProperties>({});
@@ -69,9 +72,10 @@ export default function NameSuggest({ value, onChange, options, className, place
   const id = useId();
 
   const matches = useMemo(() => {
+    if (showAll && !norm(value)) return options.slice(0, 50);
     const list = options.filter((o) => startsWith(o.name, value) && norm(o.name) !== norm(value));
-    return list.slice(0, 8);
-  }, [options, value]);
+    return list.slice(0, showAll ? 50 : 8);
+  }, [options, value, showAll]);
   const shown = open && matches.length > 0;
 
   useEffect(() => {
@@ -86,11 +90,12 @@ export default function NameSuggest({ value, onChange, options, className, place
   return (
     <div ref={box} className="relative">
       <input
-        className={className} placeholder={placeholder} value={value} aria-label={label}
+        className={className} placeholder={placeholder} value={value} aria-label={label} disabled={disabled}
         role="combobox" aria-autocomplete="list" aria-expanded={shown} aria-controls={`${id}-list`}
         aria-activedescendant={shown ? `${id}-${active}` : undefined} autoComplete="off"
         onChange={(e) => { onChange(e.target.value); show(); setActive(0); }}
         onFocus={show}
+        onClick={show}
         onBlur={() => setOpen(false)}
         onKeyDown={(e) => {
           if (!shown) return;

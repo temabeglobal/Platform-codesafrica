@@ -18,6 +18,37 @@ create table if not exists members (
   added_at timestamptz not null default now()
 );
 
+-- Gestion des utilisateurs par l'administrateur (comme dans timly : accès sur invitation uniquement).
+-- Une personne ajoutée reçoit un lien d'activation à usage unique
+-- (seule son empreinte SHA-256 est gardée) ; elle crée son mot de passe avec ce lien, puis son accès est actif (activated_at).
+alter table members add column if not exists name text not null default '';
+alter table members add column if not exists role text not null default 'membre';
+alter table members add column if not exists added_by text;
+alter table members add column if not exists invite_hash text;
+alter table members add column if not exists invite_expires timestamptz;
+alter table members add column if not exists activated_at timestamptz;
+-- Fiche de la personne (comme dans timly) : fonction, département, téléphone, localisation.
+alter table members add column if not exists job_title  text not null default '';
+alter table members add column if not exists department text not null default '';
+alter table members add column if not exists phone      text not null default '';
+alter table members add column if not exists location   text not null default '';
+-- Événements attribués par l'administrateur : une personne non administratrice ne voit que ceux-ci
+-- (plus ceux qu'elle crée elle-même, ajoutés automatiquement). L'administrateur voit tout.
+alter table members add column if not exists event_ids text[] not null default '{}';
+-- Rôles : admin (gère les utilisateurs), chef_projet et membre (lisent et modifient les données).
+alter table members drop constraint if exists members_role_check;
+alter table members add constraint members_role_check check (role in ('admin', 'chef_projet', 'membre'));
+-- Personnes inscrites avant les invitations : déjà actives.
+update members set activated_at = added_at where activated_at is null and invite_hash is null;
+
+-- Vérifications de liens d'activation (limite par adresse IP et par jour, contre les essais en série).
+create table if not exists invite_attempts (
+  day date not null,
+  ip  text not null,
+  n   int  not null default 0,
+  primary key (day, ip)
+);
+
 -- Quotas de Sonia sans compte (site de test) : nombre de questions par jour et par adresse IP.
 create table if not exists ai_usage (
   day date not null,

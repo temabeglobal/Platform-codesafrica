@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pencil, Plus, ReceiptText, Trash2, X } from 'lucide-react';
-import PaymentBadge from './PaymentBadge';
+import PaymentBadge, { ProviderBadge } from './PaymentBadge';
 import { detailOf, fmtDate, type BudgetLine, type Expense } from '../demo';
 import { DateFilterBar, useDateFilter } from './DateFilter';
 
@@ -104,7 +104,7 @@ export default function BudgetLineModal({ line, onClose, onAdd, onDelete, onEdit
                     <>
                       <span className="min-w-0 flex-1">
                         <span className="block font-medium truncate">{e.label}</span>
-                        <span className="flex flex-wrap items-center gap-1.5 mt-0.5 text-xs text-ink-500">{fmtDate(e.date)} <PaymentBadge e={e} /></span>
+                        <span className="flex flex-wrap items-center gap-1.5 mt-0.5 text-xs text-ink-500">{fmtDate(e.date)} <PaymentBadge e={e} /> <ProviderBadge e={e} /></span>
                       </span>
                       <span className="shrink-0 text-right">
                         <span className="block font-semibold tabular-nums">{fmt(e.amount)}</span>

@@ -865,7 +865,7 @@ function demoReply(q: string, e: PlatformEvent, d: EventData) {
   const t = q.toLowerCase();
   if (/retard/.test(t)) {
     if (!s.late.length) return 'Bonne nouvelle : aucune tâche n’est en retard. Tout avance comme prévu.';
-    return `Voici les tâches en retard :\n${s.late.map((x) => `• ${x.title} — ${x.owner}, prévue le ${fmtDate(x.due)}`).join('\n')}\n\nJe vous propose de commencer par la première : voulez-vous que je prépare un petit message pour ${s.late[0].owner} ?`;
+    return `Voici les tâches en retard :\n${s.late.map((x) => `• ${x.title}${x.owner ? ` — ${x.owner}` : ''}, prévue le ${fmtDate(x.due)}`).join('\n')}\n\nJe vous propose de commencer par la première : voulez-vous que je prépare un petit message pour ${s.late[0].owner || 'l’équipe concernée'} ?`;
   }
   if (/relanc/.test(t)) {
     if (!s.toFollow.length) return 'Personne n’attend de relance pour le moment. Je vous préviendrai dès qu’un contact restera sans réponse.';

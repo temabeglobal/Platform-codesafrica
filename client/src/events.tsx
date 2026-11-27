@@ -33,6 +33,9 @@ const seed: PlatformEvent[] = [
     reference: 'CA-CODE-2026-103', description: 'Édition 2026 du forum CODES Africa.', budget: '100000', owner: 'Équipe organisation', attendees: '700' },
 ];
 
+/** Remplaçant quand aucun événement n'est attribué : il n'est dans aucune liste, donc jamais enregistré ni synchronisé. */
+export const NO_EVENT: PlatformEvent = { id: '__aucun__', name: 'Aucun événement', start: '', end: '', place: '', type: '', color: '#0A86A8', reference: '', description: '', budget: '', owner: '', attendees: '' };
+
 export interface EventsState {
   events: PlatformEvent[];
   current: PlatformEvent;
@@ -131,9 +134,10 @@ export function EventsProvider({ children }: { children: ReactNode }) {
         // Copie de secours laissée à la fermeture de la page : on la reprend si elle est plus récente.
         const backup = readBackup();
         const saved = backup && (!stored?.savedAt || backup.savedAt > stored.savedAt) ? backup : stored;
-        if (!alive || !saved?.events?.length) return;
+        // Une liste vide n'est gardée que si elle vient du serveur (aucun événement attribué à la personne connectée).
+        if (!alive || !saved || (!saved.events?.length && !saved.sync?.lastPull)) return;
         setEvents(saved.events);
-        setCurrentId(saved.events.some((e) => e.id === saved.currentId) ? saved.currentId : saved.events[0].id);
+        setCurrentId(saved.events.some((e) => e.id === saved.currentId) ? saved.currentId : saved.events[0]?.id ?? '');
         // Les champs ajoutés depuis le dernier enregistrement reçoivent leur valeur par défaut.
         // L'avancement et le statut des tâches sont recalculés, au cas où la règle de calcul a changé depuis.
         setDataById(Object.fromEntries(Object.entries(saved.dataById ?? {}).map(([id, d]) => [id, normalize(d)])));
@@ -219,10 +223,17 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       });
       setDataById((d) => ({ ...d, ...Object.fromEntries(rows.map((r) => [r.id, normalize(r.data)])) }));
     },
+    drop: (ids) => {
+      const gone = new Set(ids);
+      setEvents((list) => list.filter((e) => !gone.has(e.id)));
+      setDataById((d) => Object.fromEntries(Object.entries(d).filter(([id]) => !gone.has(id))));
+    },
+    localIds: () => live.current.events.map((e) => e.id),
   });
 
   const value = useMemo<EventsState>(() => {
-    const current = events.find((e) => e.id === currentId) ?? events[0];
+    // Aucun événement (personne à qui rien n'est encore attribué) : un événement vide, jamais enregistré ni envoyé.
+    const current = events.find((e) => e.id === currentId) ?? events[0] ?? NO_EVENT;
     // Toute écriture de tâche vise l'événement actif, jamais un autre.
     const setTasks = (fn: (list: Task[]) => Task[]) => setDataById((d) => {
       const cur = d[current.id] ?? emptyEventData();

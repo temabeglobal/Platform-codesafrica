@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRealtimeClient, type SealedLiveQuery } from '@neon/realtime/client';
-import { ApiError, api, authClient, neonEnabled, realtimeUrl } from './neon';
+import { ApiError, activateInvitation, api, authClient, checkInvitation, neonEnabled, realtimeUrl } from './neon';
 
 /* Synchronisation hors connexion d'abord :
    - chaque modification est d'abord enregistrée sur l'appareil, et l'événement modifié est noté « à envoyer » ;
@@ -36,7 +36,8 @@ export interface Cloud {
   live: boolean;
   error?: string;
   signIn: (email: string, password: string) => Promise<string | undefined>;
-  signUp: (name: string, email: string, password: string) => Promise<string | undefined>;
+  /** Première connexion d'une personne invitée (lien d'activation) : crée son mot de passe et active son accès. */
+  acceptInvite: (token: string, password: string) => Promise<string | undefined>;
   signOut: () => Promise<void>;
   syncNow: () => void;
 }
@@ -69,6 +70,10 @@ export function useCloudSync<M, D>(opts: {
   rowsFor: (ids: string[]) => { id: string; meta: M; data: D }[];
   /** Applique les versions relues (déjà filtrées : aucune n'a de modification locale en attente). */
   apply: (rows: Row<M, D>[]) => void;
+  /** Retire de l'appareil les événements qui ne sont pas (ou plus) attribués à la personne connectée. */
+  drop: (ids: string[]) => void;
+  /** Identifiants des événements présents sur l'appareil. */
+  localIds: () => string[];
 }): Cloud {
   const [email, setEmail] = useState<string>();
   const [online, setOnline] = useState(() => navigator.onLine);
@@ -90,6 +95,13 @@ export function useCloudSync<M, D>(opts: {
     return () => { window.removeEventListener('online', up); window.removeEventListener('offline', down); };
   }, []);
 
+  /** Nouvelle connexion : tout est relu (les événements visibles dépendent de la personne connectée). */
+  const fullPull = () => o.current.setSync((s) => ({ ...s, lastPull: undefined }));
+  /** Retire des événements de l'appareil et oublie leurs modifications en attente. */
+  const dropIds = (ids: string[]) => {
+    o.current.drop(ids);
+    o.current.setSync((s) => { const dirty = { ...s.dirty }; for (const id of ids) delete dirty[id]; return { ...s, dirty }; });
+  };
   const run = useCallback(async () => {
     if (!neonEnabled || !email || !navigator.onLine || !o.current.ready) return;
     if (running.current) { again.current = true; return; }
@@ -100,7 +112,23 @@ export function useCloudSync<M, D>(opts: {
       const pull = async () => {
         const last = o.current.getSync().lastPull;
         const since = last ? new Date(Date.parse(last) - 60_000).toISOString() : '1970-01-01T00:00:00Z';
-        const { rows } = await api<{ rows: Row<M, D>[] }>(`/v1/events?since=${encodeURIComponent(since)}`);
+        const res = await api<{ rows: Row<M, D>[]; allowed: string[] | null }>(`/v1/events?since=${encodeURIComponent(since)}`);
+        let rows = res.rows;
+        // Personne non administratrice : seuls ses événements restent sur l'appareil. Ceux tout juste attribués
+        // (plus anciens que la dernière lecture) sont lus en entier ; ceux qui ne sont pas à elle sont retirés,
+        // sauf une création faite sur cet appareil et pas encore envoyée (elle lui sera attribuée à l'envoi).
+        if (res.allowed) {
+          const allowed = new Set(res.allowed);
+          const local = o.current.localIds();
+          const missing = res.allowed.filter((id) => !local.includes(id) && !rows.some((r) => r.id === id));
+          if (missing.length) {
+            const more = await api<{ rows: Row<M, D>[] }>(`/v1/events?ids=${encodeURIComponent(missing.join(','))}`);
+            rows = [...rows, ...more.rows.filter((r) => !rows.some((x) => x.id === r.id))].sort((a, b) => (a.updated_at < b.updated_at ? -1 : 1));
+          }
+          const d = o.current.getSync().dirty;
+          const gone = local.filter((id) => !allowed.has(id) && (!d[id] || d[id] === INITIAL));
+          if (gone.length) dropIds(gone);
+        }
         const replaced = new Set<string>();
         if (!rows.length) return replaced;
         const dirty = o.current.getSync().dirty;
@@ -123,7 +151,9 @@ export function useCloudSync<M, D>(opts: {
         if (!ids.length) return;
         const rows = o.current.rowsFor(ids);
         for (let i = 0; i < rows.length; i += 20) {
-          await api('/v1/events', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: rows.slice(i, i + 20) }) });
+          const r = await api<{ refused?: string[] }>('/v1/events', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rows: rows.slice(i, i + 20) }) });
+          // Événement existant qui n'est pas attribué à cette personne : retiré de l'appareil.
+          if (r.refused?.length) dropIds(r.refused);
         }
         // Retirés de la liste seulement s'ils n'ont pas été modifiés de nouveau pendant l'envoi.
         o.current.setSync((s) => {
@@ -216,18 +246,32 @@ export function useCloudSync<M, D>(opts: {
       try {
         const { data, error: e } = await authClient.signIn.email({ email: mail.trim(), password });
         if (e) return authError(e.message ?? e.code);
+        fullPull();
         setEmail(data?.user?.email ?? mail.trim());
         return undefined;
       } catch (e) { return authError(e instanceof Error ? e.message : undefined); }
     },
-    signUp: async (name, mail, password) => {
+    acceptInvite: async (token, password) => {
       if (!authClient) return 'Aucun service en ligne n’est configuré.';
       try {
-        const { data, error: e } = await authClient.signUp.email({ name: name.trim() || mail.trim(), email: mail.trim(), password });
-        if (e) return authError(e.message ?? e.code);
-        setEmail(data?.user?.email ?? mail.trim());
+        // 1. Le lien est vérifié d'abord : sans invitation valable, aucun compte n'est créé.
+        const { email: address, name } = await checkInvitation(token);
+        // 2. Création du mot de passe (ou connexion si le compte existe déjà, par exemple après un premier essai interrompu).
+        const up = await authClient.signUp.email({ name: name || address, email: address, password });
+        if (up.error) {
+          if (!/already exists|user_already_exists/i.test(`${up.error.message} ${up.error.code}`)) return authError(up.error.message ?? up.error.code);
+          const inn = await authClient.signIn.email({ email: address, password });
+          if (inn.error) return 'Un compte existe déjà avec cette adresse : saisissez son mot de passe, ou demandez à l’administrateur de vérifier.';
+        }
+        // 3. Activation de l'accès avec le lien.
+        await activateInvitation(token);
+        fullPull();
+        setEmail(address);
         return undefined;
-      } catch (e) { return authError(e instanceof Error ? e.message : undefined); }
+      } catch (e) {
+        if (e instanceof ApiError) return e.message;
+        return authError(e instanceof Error ? e.message : undefined);
+      }
     },
     signOut: async () => { await authClient?.signOut().catch(() => undefined); setEmail(undefined); setError(undefined); setLastSync(undefined); },
     syncNow: () => { setError(undefined); run(); },

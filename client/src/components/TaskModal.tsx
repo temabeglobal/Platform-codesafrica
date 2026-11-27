@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Save, X } from 'lucide-react';
+import { Save, UsersRound, X } from 'lucide-react';
 import type { NewTask, Task, TaskStatus } from '../demo';
 import { useEvents } from '../events';
-import NameSuggest, { teamNames } from './NameSuggest';
+import NameSuggest, { norm, teamNames, type NameOption } from './NameSuggest';
 
 /* Ajout d'une tâche à l'événement actif. Maquette : rien n'est encore enregistré en base. */
 
 interface Props {
   open: boolean;
   eventName: string;
-  /** Tâches existantes de l'événement, pour choisir une dépendance. */
+  /** Tâches existantes de l'événement, pour éviter deux tâches au même titre. */
   tasks: Task[];
   onClose: () => void;
   onSubmit: (t: NewTask) => void;
@@ -18,7 +18,7 @@ interface Props {
 }
 
 const STATUSES: TaskStatus[] = ['À faire', 'En cours', 'Terminée'];
-const empty = () => ({ title: '', owner: '', due: '', status: 'À faire' as TaskStatus, dependsOn: '' });
+const empty = () => ({ title: '', team: '', owner: '', due: '', status: 'À faire' as TaskStatus });
 type Form = ReturnType<typeof empty>;
 type Errors = Partial<Record<keyof Form, string>>;
 
@@ -27,7 +27,21 @@ export default function TaskModal({ open, eventName, tasks, onClose, onSubmit, d
   const [errors, setErrors] = useState<Errors>({});
   const first = useRef<HTMLInputElement>(null);
   const { data } = useEvents();
-  const names = useMemo(() => teamNames(data.teams), [data.teams]);
+  /* Équipe : on tape, la liste des équipes du menu Équipe se filtre. Seule une équipe existante est acceptée. */
+  const teamOptions = useMemo<NameOption[]>(() => data.teams.map((t) => {
+    const n = t.members.length + (t.lead.trim() ? 1 : 0);
+    return { name: t.name, detail: `${n} personne${n > 1 ? 's' : ''}${t.lead.trim() ? ` · responsable ${t.lead.trim()}` : ''}` };
+  }), [data.teams]);
+  const teamOf = (name: string) => data.teams.find((t) => norm(t.name) === norm(name));
+  /* Responsable : d'abord les personnes de l'équipe choisie, puis tous les autres noms du menu Équipe. */
+  const names = useMemo(() => {
+    const chosen = teamOf(form.team);
+    const all = teamNames(data.teams);
+    if (!chosen) return all;
+    const mine = teamNames([chosen], true);
+    const seen = new Set(mine.map((o) => norm(o.name)));
+    return [...mine, ...all.filter((o) => !seen.has(norm(o.name)))];
+  }, [data.teams, form.team]);
 
   useEffect(() => {
     if (!open) return;
@@ -50,13 +64,16 @@ export default function TaskModal({ open, eventName, tasks, onClose, onSubmit, d
     const e: Errors = {};
     if (!form.title.trim()) e.title = 'Le titre est requis.';
     else if (tasks.some((t) => t.title.toLowerCase() === form.title.trim().toLowerCase())) e.title = 'Une tâche porte déjà ce titre.';
-    if (!form.owner.trim()) e.owner = 'Le responsable est requis.';
+    const team = teamOf(form.team);
+    if (!data.teams.length) e.team = 'Créez d’abord une équipe dans le menu Équipe.';
+    else if (!form.team.trim()) e.team = 'Choisissez l’équipe chargée de la tâche.';
+    else if (!team) e.team = 'Choisissez une équipe de la liste (menu Équipe).';
     if (!form.due) e.due = 'La date limite est requise.';
     setErrors(e);
     if (Object.keys(e).length) return;
     onSubmit({
-      title: form.title.trim(), owner: form.owner.trim(), due: form.due,
-      status: form.status, progress: 0, dependsOn: form.dependsOn || undefined,
+      title: form.title.trim(), team: team!.id, owner: form.owner.trim(), due: form.due,
+      status: form.status, progress: 0,
     });
   };
 
@@ -84,9 +101,14 @@ export default function TaskModal({ open, eventName, tasks, onClose, onSubmit, d
             <Field label="Titre de la tâche" required error={errors.title}>
               <input ref={first} className={input(errors.title)} placeholder="Réserver la salle" value={form.title} onChange={(e) => update('title', e.target.value)} />
             </Field>
+            <Field label="Équipe" required error={errors.team}
+              hint={data.teams.length ? 'L’équipe du menu Équipe chargée de cette tâche' : 'Aucune équipe pour cet événement : créez-en une dans le menu Équipe.'}>
+              <NameSuggest className={input(errors.team)} placeholder="Tapez le nom d’une équipe" label="Équipe" icon={UsersRound}
+                options={teamOptions} value={form.team} onChange={(v) => update('team', v)} showAll disabled={!data.teams.length} />
+            </Field>
             <div className="grid sm:grid-cols-2 gap-4">
-              <Field label="Responsable" required error={errors.owner}>
-                <NameSuggest className={input(errors.owner)} placeholder="Tapez un nom ou une équipe" label="Responsable" options={names} value={form.owner} onChange={(v) => update('owner', v)} />
+              <Field label="Responsable" error={errors.owner} hint="Facultatif">
+                <NameSuggest className={input(errors.owner)} placeholder="Tapez un nom" label="Responsable" options={names} value={form.owner} onChange={(v) => update('owner', v)} showAll />
               </Field>
               <Field label="Date limite" required error={errors.due}>
                 <input type="date" className={input(errors.due)} value={form.due} onChange={(e) => update('due', e.target.value)} />
@@ -94,12 +116,6 @@ export default function TaskModal({ open, eventName, tasks, onClose, onSubmit, d
               <Field label="Statut">
                 <select className={input()} value={form.status} onChange={(e) => update('status', e.target.value as TaskStatus)}>
                   {STATUSES.map((s) => <option key={s}>{s}</option>)}
-                </select>
-              </Field>
-              <Field label="Dépend de" hint={tasks.length ? 'Facultatif : la tâche qui doit être finie avant' : 'Aucune autre tâche dans cet événement'}>
-                <select className={input()} value={form.dependsOn} onChange={(e) => update('dependsOn', e.target.value)} disabled={!tasks.length}>
-                  <option value="">Aucune</option>
-                  {tasks.map((t) => <option key={t.title} value={t.title}>{t.title}</option>)}
                 </select>
               </Field>
             </div>

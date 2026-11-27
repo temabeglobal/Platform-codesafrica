@@ -52,6 +52,58 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+// —— Utilisateurs : accès sur invitation uniquement ——
+export type Role = 'admin' | 'chef_projet' | 'membre';
+export const ROLE_LABELS: Record<Role, string> = { admin: 'Administrateur', chef_projet: 'Chef de projet', membre: 'Membre de l’équipe' };
+export interface Me { email: string; name: string; role: Role }
+/** Fiche d'un utilisateur (comme dans timly). */
+export interface Profile { name: string; job_title: string; department: string; phone: string; location: string; /** Événements attribués (l'administrateur voit tout). */ event_ids: string[] }
+export interface Member extends Profile { email: string; role: Role; added_at: string; activated_at: string | null; invite_expires: string | null; added_by: string | null }
+export interface NewUser { first_name: string; last_name: string; email: string; job_title: string; department: string; role: Role; phone: string; location: string; event_ids: string[] }
+/** Lien d'activation : envoyé par e-mail en production (email_sent) ; en local et en test, jamais d'e-mail réel (email_locked). */
+export interface Invitation { email: string; name: string; setup_link: string; email_sent: boolean; email_locked: boolean; days: number }
+const post = <T,>(path: string, body: unknown) => api<T>(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+export const getMe = () => api<Me>('/v1/me');
+export const setMyName = (name: string) => post<{ ok: true; name: string }>('/v1/me', { name });
+/** Changement du mot de passe (Neon Auth) : l'ancien est exigé. */
+export async function changePassword(currentPassword: string, newPassword: string) {
+  if (!authClient) throw new ApiError(0, 'Aucun service en ligne n’est configuré.');
+  const fr = (msg?: string, code?: string) => {
+    const m = `${msg ?? ''} ${code ?? ''}`;
+    return /invalid.*password|incorrect|credential/i.test(m) ? 'Mot de passe actuel incorrect.'
+      : /short|least|too_short/i.test(m) ? 'Nouveau mot de passe trop court (8 caractères au moins).'
+      : /fetch|network/i.test(m) ? 'Le serveur est injoignable. Réessayez dans un instant.'
+      : 'Changement impossible. Réessayez.';
+  };
+  let error: { message?: string; code?: string } | null | undefined;
+  try {
+    ({ error } = await (authClient as unknown as { changePassword: (b: { currentPassword: string; newPassword: string; revokeOtherSessions?: boolean }) => Promise<{ error?: { message?: string; code?: string } | null }> })
+      .changePassword({ currentPassword, newPassword, revokeOtherSessions: false }));
+  } catch (e) {
+    const x = e as { message?: string; code?: string };
+    throw new ApiError(400, fr(x?.message, x?.code));
+  }
+  if (error) throw new ApiError(400, fr(error.message, error.code));
+}
+export const listMembers = () => api<{ users: Member[] }>('/v1/admin/users').then((r) => r.users);
+export const addMember = (u: NewUser) => post<Invitation>('/v1/admin/users', u);
+export const updateMember = (email: string, role: Role, p: Profile) => post<{ ok: true }>('/v1/admin/users/update', { email, role, ...p });
+export const setMemberRole = (email: string, role: Role) => post<{ ok: true }>('/v1/admin/users/role', { email, role });
+export const renewInvitation = (email: string) => post<Invitation>('/v1/admin/users/invite', { email });
+export const removeMember = (email: string) => post<{ ok: true }>('/v1/admin/users/remove', { email });
+export const activateInvitation = (token: string) => post<{ ok: true }>('/v1/invitation/activate', { token });
+/** Vérifie un lien d'activation AVANT de créer le compte ; renvoie l'adresse et le nom de la personne invitée. */
+export async function checkInvitation(token: string) {
+  if (!apiUrl) throw new ApiError(0, 'Aucun service en ligne n’est configuré.');
+  let res: Response;
+  try {
+    res = await fetch(`${apiUrl}/public/invitation`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }) });
+  } catch { throw new ApiError(0, 'Pas de connexion internet. Réessayez une fois en ligne.'); }
+  const body = await res.json().catch(() => ({})) as { error?: string; email?: string; name?: string };
+  if (!res.ok) throw new ApiError(res.status, body.error ?? `Erreur ${res.status}.`);
+  return { email: body.email!, name: body.name ?? '' };
+}
+
 /** Envoie un fichier dans le stockage et renvoie sa clé. */
 export const uploadFile = (file: File) =>
   api<{ key: string }>(`/v1/files?name=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file });

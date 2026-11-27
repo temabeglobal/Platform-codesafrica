@@ -115,7 +115,7 @@ export const ACTIONS: Record<string, Def> = {
     parameters: obj({ items: list(obj({
       title: str('Intitulé'), owner: str('Responsable'), due: date('Échéance AAAA-MM-JJ'), status: oneOf(TASK_STATUSES),
       phases: { type: 'array', items: obj({ title: str('Nom de la phase'), subtasks: { type: 'array', items: { type: 'string' } } }, ['title', 'subtasks']) },
-    }, ['title', 'owner', 'due'])) }, ['items']),
+    }, ['title', 'due'])) }, ['items']),
     summary: (a) => `Ajouter ${many(items(a).length, 'tâche', 'tâches')} :\n${bullet(items(a).map((t) => {
       const phases = Array.isArray(t.phases) ? (t.phases as Json[]) : [];
       const detail = phases.map((p) => `\n   ${text(p.title) || 'Phase'} : ${(Array.isArray(p.subtasks) ? p.subtasks : []).map((x) => text(x)).filter(Boolean).join(', ') || 'aucune sous-tâche'}`).join('');

@@ -1,0 +1,29 @@
+# Render — site de TEST de la plateforme (site statique construit depuis client/).
+# Branché sur la branche Neon « test » uniquement : jamais sur la base de production.
+# Les valeurs ci-dessous sont des adresses publiques (aucun secret) ; la production sera ajoutée après accord explicite.
+services:
+  - type: web
+    runtime: static
+    name: codesafrica-planning-test
+    branch: main
+    rootDir: client
+    buildCommand: npm ci && npm run build:test
+    staticPublishPath: dist
+    pullRequestPreviewsEnabled: false
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: VITE_NEON_TEST_AUTH_URL
+        value: https://ep-solitary-silence-bdtnyc3f.neonauth.c-8.us-east-2.aws.neon.tech/neondb/auth
+      - key: VITE_NEON_TEST_API_URL
+        value: https://br-holy-shadow-bduosnae-api.compute.c-8.us-east-2.aws.neon.tech
+      - key: VITE_NEON_TEST_REALTIME_URL
+        value: wss://ep-solitary-silence-bdtnyc3f.rt.c-8.us-east-2.aws.neon.tech/
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Robots-Tag
+        value: noindex

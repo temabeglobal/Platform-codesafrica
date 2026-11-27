@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Plus, ReceiptText, Save, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Plus, ReceiptText, Save, Truck, X } from 'lucide-react';
+import { useEvents } from '../events';
+import NameSuggest, { norm, type NameOption } from './NameSuggest';
 import { detailOf, paymentStatuses, uid, type BudgetLine, type Expense, type PaymentStatus } from '../demo';
 
 /* Ajouter une dépense au budget de l'événement actif : sur un poste existant ou sur un nouveau poste.
@@ -18,7 +20,7 @@ interface Props {
 }
 
 const NEW = '__nouveau__';
-type Errors = Partial<Record<'label' | 'qty' | 'unit' | 'date' | 'poste' | 'planned' | 'paidOn', string>>;
+type Errors = Partial<Record<'label' | 'qty' | 'unit' | 'date' | 'poste' | 'planned' | 'paidOn' | 'provider', string>>;
 const today = () => new Date().toISOString().slice(0, 10);
 const toNumber = (v: string) => Number(v.replace(/\s/g, '').replace(',', '.'));
 const round = (n: number) => Math.round(n * 100) / 100;
@@ -34,14 +36,19 @@ export default function ExpenseModal({ open, eventName, lines, poste: initialPos
   const [planned, setPlanned] = useState('');
   const [payment, setPayment] = useState<PaymentStatus>('Payé');
   const [paidOn, setPaidOn] = useState('');
+  const [provider, setProvider] = useState('');
   const [errors, setErrors] = useState<Errors>({});
+  /* Prestataire (facultatif) : on tape, la liste des prestataires du menu Prestataires se filtre. */
+  const { data } = useEvents();
+  const providerOptions = useMemo<NameOption[]>(() => data.providers.map((p) => ({ name: p.name, detail: [p.category, p.status].filter(Boolean).join(' · ') })), [data.providers]);
+  const providerOf = (name: string) => data.providers.find((p) => norm(p.name) === norm(name));
   const first = useRef<HTMLInputElement>(null);
   const plannedOf = (label?: string) => { const l = lines.find((x) => x.label === label); return l ? String(l.planned) : ''; };
   const choose = (label: string) => { setPoste(label); setPlanned(label === NEW ? '' : plannedOf(label)); clear('poste'); clear('planned'); };
 
   useEffect(() => {
     if (!open) return;
-    setLabel(initial?.label ?? ''); setQty(initial ? String(detailOf(initial).qty) : '1'); setUnit(initial ? String(detailOf(initial).unit) : ''); setDate(initial?.date ?? today()); setPoste(initialPoste ?? (lines.length ? '' : NEW)); setNewPoste(''); setPlanned(plannedOf(initialPoste)); setPayment(initial?.payment ?? 'Payé'); setPaidOn(initial?.paidOn ?? initial?.date ?? today()); setErrors({});
+    setLabel(initial?.label ?? ''); setQty(initial ? String(detailOf(initial).qty) : '1'); setUnit(initial ? String(detailOf(initial).unit) : ''); setDate(initial?.date ?? today()); setPoste(initialPoste ?? (lines.length ? '' : NEW)); setNewPoste(''); setPlanned(plannedOf(initialPoste)); setPayment(initial?.payment ?? 'Payé'); setPaidOn(initial?.paidOn ?? initial?.date ?? today()); setProvider(data.providers.find((p) => p.id === initial?.provider)?.name ?? ''); setErrors({});
     const t = setTimeout(() => first.current?.focus({ preventScroll: true }), 50);
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
@@ -68,9 +75,11 @@ export default function ExpenseModal({ open, eventName, lines, poste: initialPos
     else if (poste === NEW && !name) e.poste = 'Donnez un nom au nouveau poste.';
     else if (poste === NEW && lines.some((l) => l.label.toLowerCase() === name.toLowerCase())) e.poste = 'Ce poste existe déjà : choisissez-le dans la liste.';
     if (p !== undefined && (!Number.isFinite(p) || p < 0)) e.planned = 'Indiquez un montant valide.';
+    const prov = provider.trim() ? providerOf(provider) : undefined;
+    if (provider.trim() && !prov) e.provider = 'Choisissez un prestataire de la liste (menu Prestataires), ou laissez vide.';
     setErrors(e);
     if (Object.keys(e).length) return;
-    onSubmit(name, { id: initial?.id ?? uid(), label: label.trim(), amount: round(q * u), qty: q, unitPrice: u, date, payment, paidOn }, p);
+    onSubmit(name, { id: initial?.id ?? uid(), label: label.trim(), amount: round(q * u), qty: q, unitPrice: u, date, payment, paidOn, provider: prov?.id }, p);
   };
 
   const input = (bad?: string) =>
@@ -122,6 +131,11 @@ export default function ExpenseModal({ open, eventName, lines, poste: initialPos
               <input ref={first} className={input(errors.label)} placeholder="Location de chaises supplémentaires" value={label}
                 onChange={(e) => { setLabel(e.target.value); clear('label'); }} />
             </Field>
+            <Field label="Prestataire" error={errors.provider}
+              hint={data.providers.length ? 'Facultatif : le prestataire payé pour cette dépense' : 'Aucun prestataire pour cet événement : ajoutez-en dans le menu Prestataires.'}>
+              <NameSuggest className={input(errors.provider)} placeholder="Tapez le nom d’un prestataire" label="Prestataire" icon={Truck}
+                options={providerOptions} value={provider} onChange={(v) => { setProvider(v); clear('provider'); }} showAll disabled={!data.providers.length} />
+            </Field>
             <div className="grid grid-cols-2 gap-4">
               <Field label="Quantité" required error={errors.qty}>
                 <input inputMode="decimal" aria-label="Quantité" className={input(errors.qty)} placeholder="1" value={qty}
@@ -169,12 +183,12 @@ export default function ExpenseModal({ open, eventName, lines, poste: initialPos
   );
 }
 
-function Field({ label, required, error, children }: { label: string; required?: boolean; error?: string; children: ReactNode }) {
+function Field({ label, required, error, hint, children }: { label: string; required?: boolean; error?: string; hint?: string; children: ReactNode }) {
   return (
     <div className="space-y-1.5">
       <span className="text-sm font-medium flex items-center gap-1">{label} {required && <span className="text-red-600" aria-hidden>*</span>}</span>
       {children}
-      {error && <p className="text-xs text-red-700">{error}</p>}
+      {error ? <p className="text-xs text-red-700">{error}</p> : hint ? <p className="text-xs text-ink-500">{hint}</p> : null}
     </div>
   );
 }

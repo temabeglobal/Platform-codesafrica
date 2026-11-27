@@ -1,11 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { CalendarX2, ChevronLeft, ChevronRight } from 'lucide-react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import EnvBanner from './EnvBanner';
 import OfflineBanner from './OfflineBanner';
 import Sonia from './Sonia';
 import CloudAccount from './CloudAccount';
 import { dashboard, groups, moduleAt, modulesOf } from '../modules';
+import { useEvents } from '../events';
 
 const tabBase = 'shrink-0 flex items-center gap-2 px-2.5 sm:px-4 py-3 text-[13px] sm:text-sm rounded-t-2xl transition';
 const tabActive = 'bg-white/15 backdrop-blur-sm text-white font-semibold shadow-[inset_0_-3px_0_#00a3cc]';
@@ -13,6 +14,7 @@ const tabIdle = 'text-white/80 hover:text-white hover:bg-white/10';
 
 export default function Layout() {
   const { pathname } = useLocation();
+  const { events } = useEvents();
   const current = moduleAt(pathname);
   const activeGroup = current?.group;
   // Dans une fiche (ex. une tâche), on masque les onglets du module : le bouton « Retour » suffit.
@@ -133,7 +135,14 @@ export default function Layout() {
             ))}
           </nav>
         )}
-        <Outlet />
+        {events.length ? <Outlet /> : (
+          // Aucun événement attribué à la personne connectée (accès donnés par l'administrateur).
+          <div className="mx-auto max-w-md mt-10 bg-white rounded-3xl ring-1 ring-ink-200 p-8 text-center space-y-3">
+            <span className="mx-auto w-12 h-12 rounded-full bg-[var(--sand)] grid place-items-center text-brand-700"><CalendarX2 size={22} /></span>
+            <h1 className="font-display text-2xl text-brand-950">Aucun événement pour le moment</h1>
+            <p className="text-sm text-ink-600">Aucun événement ne vous est encore attribué. Demandez à l’administrateur de vous ajouter à un événement : il apparaîtra ici automatiquement.</p>
+          </div>
+        )}
       </main>
       <Sonia />
     </div>

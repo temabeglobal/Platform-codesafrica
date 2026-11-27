@@ -4,7 +4,14 @@
 
    Routes (toutes sauf /health exigent un jeton Neon Auth et une adresse inscrite dans « members ») :
      GET  /health                 état de la base
-     GET  /v1/me                  compte connecté
+     GET|POST /v1/me              compte connecté (adresse, nom, rôle) ; changement du nom affiché
+     POST /public/invitation      vérifie un lien d'activation avant la création du mot de passe (essais limités par IP)
+     POST /v1/invitation/activate active l'accès avec le lien reçu (compte tout juste créé)
+     GET|POST /v1/admin/users     utilisateurs : liste, ajout (fiche complète, lien d'activation, e-mail en production)
+     POST /v1/admin/users/update  modifie la fiche et le rôle d'un utilisateur (administrateur seulement)
+     POST /v1/admin/users/role    change le rôle d'un utilisateur (administrateur seulement)
+     POST /v1/admin/users/invite  nouveau lien d'activation (administrateur seulement)
+     POST /v1/admin/users/remove  retire un utilisateur (administrateur seulement)
      GET  /v1/events?since=       événements modifiés depuis une date (heure serveur)
      PUT  /v1/events              envoi d'événements modifiés sur l'appareil
      POST /v1/events/live         requête temps réel scellée : signale chaque modification d'événement
@@ -50,7 +57,7 @@ const OPENAI_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4.1-mini';
 const MAX_FILE = 15 * 1024 * 1024;
 
-type Vars = { userId: string; email: string };
+type Vars = { userId: string; email: string; role: 'admin' | 'chef_projet' | 'membre'; name: string; /** Événements visibles (undefined = tous, pour l'administrateur). */ scope?: string[] };
 const app = new Hono<{ Variables: Vars }>();
 
 app.use('*', cors({ origin: (o) => (origins.includes(o) ? o : null), allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PUT', 'OPTIONS'], maxAge: 600 }));
@@ -80,32 +87,256 @@ app.use('/v1/*', async (c, next) => {
   try { ({ payload } = await jwtVerify(h.slice(7), jwks, { issuer })); } catch { throw new HTTPException(401, { message: 'Session expirée ou invalide.' }); }
   if (!payload.sub) throw new HTTPException(401, { message: 'Session invalide.' });
   const email = await emailOf(payload.sub, payload.email);
-  const { rowCount } = await pool.query('select 1 from members where email = $1', [email]);
-  if (!rowCount) throw new HTTPException(403, { message: 'Ce compte n’est pas autorisé. Demandez à l’administrateur de l’ajouter aux membres.' });
+  const { rows: [m] } = await pool.query<{ role: Vars['role']; name: string; active: boolean; event_ids: string[] }>(
+    'select role, name, activated_at is not null as active, event_ids from members where email = $1', [email]);
+  if (!m) throw new HTTPException(403, { message: 'Ce compte n’est pas autorisé. Seul l’administrateur ajoute les utilisateurs : demandez-lui une invitation.' });
+  // Une personne invitée n'a accès qu'à l'activation tant qu'elle n'a pas donné son code.
+  if (!m.active && c.req.path !== '/v1/invitation/activate') throw new HTTPException(403, { message: 'Accès pas encore activé : ouvrez le lien d’activation reçu (e-mail ou WhatsApp).' });
   c.set('userId', payload.sub);
   c.set('email', email);
+  c.set('role', m.role);
+  c.set('name', m.name);
+  c.set('scope', m.role === 'admin' ? undefined : (m.event_ids ?? []));
   await next();
 });
 
-app.get('/v1/me', (c) => c.json({ userId: c.get('userId'), email: c.get('email') }));
+app.get('/v1/me', (c) => c.json({ userId: c.get('userId'), email: c.get('email'), role: c.get('role'), name: c.get('name') }));
+/** Paramètres : la personne change le nom affiché (liste des utilisateurs, menu de son espace). */
+app.post('/v1/me', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { name?: string };
+  const name = String(body.name ?? '').trim().slice(0, 120);
+  if (!name) throw new HTTPException(400, { message: 'Saisissez votre nom.' });
+  await pool.query('update members set name = $2 where email = $1', [c.get('email'), name]);
+  return c.json({ ok: true, name });
+});
+
+// —— Utilisateurs : accès sur invitation uniquement, géré par l'administrateur (comme dans timly) ——
+// L'administrateur remplit la fiche (prénom, nom, e-mail, fonction, département, rôle, téléphone, localisation).
+// La personne reçoit un lien d'activation à usage unique (7 jours) pour créer elle-même son mot de passe :
+// par e-mail automatiquement en production (Resend), sinon le lien s'affiche pour être copié ou envoyé sur WhatsApp.
+// Seule l'empreinte SHA-256 du lien est gardée. Le local et le test n'envoient jamais d'e-mail réel.
+const INVITE_DAYS = 7;
+const MAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const ROLES = ['admin', 'chef_projet', 'membre'] as const;
+type Role = typeof ROLES[number];
+const roleOf = (v: unknown): Role | undefined => (ROLES as readonly string[]).includes(String(v)) ? v as Role : undefined;
+const sha256 = async (v: string) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(v))).toString('hex');
+const newToken = () => Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex');
+const normToken = (v: unknown) => String(v ?? '').trim().toLowerCase().replace(/[^0-9a-f]/g, '');
+const mailOf = (v: unknown) => String(v ?? '').trim().toLowerCase();
+const txt = (v: unknown, max = 120) => String(v ?? '').trim().slice(0, max);
+const ipOf = (c: Context) => (c.req.header('x-forwarded-for') ?? '').split(',')[0].trim() || c.req.header('x-real-ip') || 'inconnue';
+const isProduction = process.env.NEON_BRANCH === 'production';
+const adminOnly = (c: Context<{ Variables: Vars }>) => {
+  if (c.get('role') !== 'admin') throw new HTTPException(403, { message: 'Réservé à l’administrateur.' });
+};
+/** Adresse du site pour le lien : celle d'où l'administrateur travaille (si autorisée), sinon la première autorisée. */
+const siteOf = (c: Context) => {
+  const o = c.req.header('origin') ?? '';
+  return (origins.includes(o) ? o : origins[0] ?? '').replace(/\/$/, '');
+};
+const esc = (v: string) => v.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]!));
+const inviteHtml = (name: string, link: string, by: string) => `
+<div style="background:#f4f1ea;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;color:#01212b">
+  <div style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:16px;overflow:hidden">
+    <div style="background:#000b10;padding:20px 28px;color:#ffffff;font-size:20px;font-weight:700">CODES Africa — Planning event</div>
+    <div style="padding:28px;font-size:15px;line-height:1.6">
+      <p style="font-size:18px;font-weight:700;margin:0 0 16px">Bienvenue ${esc(name)},</p>
+      <p style="margin:0 0 16px">${esc(by)} vient de vous créer un accès à la plateforme de planification des événements <strong>CODES Africa</strong>.</p>
+      <p style="margin:0 0 24px">Pour activer votre compte, choisissez votre mot de passe en cliquant sur le bouton ci-dessous :</p>
+      <p style="margin:0 0 24px"><a href="${link}" style="display:inline-block;background:#00a3cc;color:#ffffff;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:12px">Activer mon compte</a></p>
+      <p style="margin:0 0 8px;font-size:13px;color:#5b6b70">Ce lien est personnel et valable ${INVITE_DAYS} jours. Si le bouton ne fonctionne pas, copiez cette adresse dans votre navigateur :</p>
+      <p style="margin:0;font-size:12px;word-break:break-all;color:#5b6b70">${link}</p>
+    </div>
+  </div>
+</div>`;
+/** Envoi par Resend, en production seulement et si la clé est configurée. Renvoie true si l'e-mail est parti. */
+const sendInvite = async (to: string, name: string, link: string, by: string) => {
+  const key = process.env.RESEND_API_KEY;
+  if (!isProduction || !key) return false;
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: process.env.EMAIL_FROM || 'CODES Africa <noreply@codesafrica.com>', to,
+        subject: 'Bienvenue sur CODES Africa — Activez votre compte', html: inviteHtml(name || to, link, by),
+      }),
+    });
+    if (!res.ok) console.error(`[e-mail] échec Resend (${res.status}) : ${await res.text().catch(() => '')}`);
+    return res.ok;
+  } catch (e) { console.error('[e-mail] Resend injoignable', e); return false; }
+};
+/** Nouveau lien d'activation (l'ancien ne marche plus), envoyé par e-mail si possible. */
+const issueInvite = async (c: Context<{ Variables: Vars }>, email: string) => {
+  const token = newToken();
+  const { rows: [m] } = await pool.query<{ name: string }>(
+    `update members set invite_hash = $2, invite_expires = now() + interval '${INVITE_DAYS} days' where email = $1 returning name`, [email, await sha256(token)]);
+  const setup_link = `${siteOf(c)}/?invitation=${token}`;
+  const email_sent = await sendInvite(email, m?.name ?? '', setup_link, c.get('name') || 'L’administrateur');
+  return { email, name: m?.name ?? '', setup_link, email_sent, email_locked: !isProduction, days: INVITE_DAYS };
+};
+/** Personne invitée (pas encore active) correspondant à un lien valable. */
+const invitedBy = async (token: unknown) => {
+  const t = normToken(token);
+  if (t.length !== 64) return undefined;
+  const { rows: [m] } = await pool.query<{ email: string; name: string }>(
+    `select email, name from members where invite_hash = $1 and invite_expires > now() and activated_at is null`, [await sha256(t)]);
+  return m;
+};
+const eventIds = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x.length > 0 && x.length <= 100))].slice(0, 500) : []);
+const fiche = (b: Record<string, unknown>) => ({
+  event_ids: eventIds(b.event_ids),
+  name: txt(b.name) || [txt(b.first_name, 60), txt(b.last_name, 60)].filter(Boolean).join(' '),
+  job_title: txt(b.job_title), department: txt(b.department), phone: txt(b.phone, 40), location: txt(b.location),
+});
+
+/** Avant la création du mot de passe : le lien est-il valable ? (Renvoie l'adresse et le nom à afficher.) */
+app.post('/public/invitation', async (c) => {
+  const origin = c.req.header('origin') ?? '';
+  if (!origins.includes(origin)) throw new HTTPException(403, { message: 'Origine non autorisée.' });
+  const { rows: [t] } = await pool.query<{ n: number }>(
+    `insert into invite_attempts (day, ip, n) values (current_date, $1, 1)
+     on conflict (day, ip) do update set n = invite_attempts.n + 1 returning n`, [ipOf(c)]);
+  if ((t?.n ?? 0) > 30) throw new HTTPException(429, { message: 'Trop d’essais aujourd’hui. Réessayez demain.' });
+  const body = await c.req.json().catch(() => ({})) as { token?: string };
+  const m = await invitedBy(body.token);
+  if (!m) throw new HTTPException(400, { message: 'Ce lien d’activation n’est plus valable (déjà utilisé ou expiré). Demandez un nouveau lien à l’administrateur.' });
+  return c.json({ ok: true, email: m.email, name: m.name });
+});
+
+app.post('/v1/invitation/activate', async (c) => {
+  const body = await c.req.json().catch(() => ({})) as { token?: string };
+  const email = c.get('email');
+  const { rows: [m] } = await pool.query<{ active: boolean }>('select activated_at is not null as active from members where email = $1', [email]);
+  if (m?.active) return c.json({ ok: true });
+  const inv = await invitedBy(body.token);
+  if (!inv || inv.email !== email) throw new HTTPException(400, { message: 'Lien d’activation non valable pour ce compte : demandez-en un nouveau à l’administrateur.' });
+  await pool.query(`update members set activated_at = now(), invite_hash = null, invite_expires = null where email = $1`, [email]);
+  return c.json({ ok: true });
+});
+
+const USER_COLS = 'email, name, role, job_title, department, phone, location, event_ids, added_at, activated_at, invite_expires, added_by';
+app.get('/v1/admin/users', async (c) => {
+  adminOnly(c);
+  const { rows } = await pool.query(`select ${USER_COLS} from members order by coalesce(nullif(name, ''), email)`);
+  return c.json({ users: rows });
+});
+
+/** Ajouter un utilisateur (fiche complète) : l'accès attend l'activation par le lien. */
+app.post('/v1/admin/users', async (c) => {
+  adminOnly(c);
+  const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+  const email = mailOf(body.email);
+  const f = fiche(body);
+  if (!txt(body.first_name) || !txt(body.last_name)) throw new HTTPException(400, { message: 'Le prénom et le nom sont requis.' });
+  if (!MAIL.test(email)) throw new HTTPException(400, { message: 'Format d’adresse e-mail invalide.' });
+  // Le rôle n'est plus choisi dans le formulaire : une nouvelle personne est « Chef de projet ».
+  const role = body.role === undefined ? 'chef_projet' : roleOf(body.role);
+  if (!role) throw new HTTPException(400, { message: 'Rôle invalide.' });
+  const { rowCount } = await pool.query(
+    `insert into members (email, name, role, job_title, department, phone, location, event_ids, added_by) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     on conflict (email) do nothing`, [email, f.name, role, f.job_title, f.department, f.phone, f.location, f.event_ids, c.get('email')]);
+  if (!rowCount) throw new HTTPException(409, { message: 'Cette adresse a déjà un accès (ou une invitation en cours).' });
+  return c.json(await issueInvite(c, email), 201);
+});
+
+/** Vérifie qu'il restera au moins un administrateur actif. */
+const keepsAnAdmin = async (removed: string) => {
+  const { rows: [r] } = await pool.query<{ n: number }>(
+    `select count(*)::int n from members where role = 'admin' and activated_at is not null and email <> $1`, [removed]);
+  return (r?.n ?? 0) > 0;
+};
+
+/** Modifier la fiche et le rôle d'un utilisateur. */
+app.post('/v1/admin/users/update', async (c) => {
+  adminOnly(c);
+  const body = await c.req.json().catch(() => ({})) as Record<string, unknown>;
+  const email = mailOf(body.email);
+  const role = roleOf(body.role);
+  if (!role) throw new HTTPException(400, { message: 'Rôle invalide.' });
+  const f = fiche(body);
+  if (!f.name) throw new HTTPException(400, { message: 'Le prénom et le nom sont requis.' });
+  if (role !== 'admin' && !(await keepsAnAdmin(email))) throw new HTTPException(400, { message: 'Il faut garder au moins un administrateur.' });
+  const { rowCount } = await pool.query(
+    `update members set name = $2, role = $3, job_title = $4, department = $5, phone = $6, location = $7, event_ids = $8 where email = $1`,
+    [email, f.name, role, f.job_title, f.department, f.phone, f.location, f.event_ids]);
+  if (!rowCount) throw new HTTPException(404, { message: 'Utilisateur introuvable.' });
+  return c.json({ ok: true });
+});
+
+app.post('/v1/admin/users/role', async (c) => {
+  adminOnly(c);
+  const body = await c.req.json().catch(() => ({})) as { email?: string; role?: string };
+  const email = mailOf(body.email);
+  const role = roleOf(body.role);
+  if (!role) throw new HTTPException(400, { message: 'Rôle invalide.' });
+  if (role !== 'admin' && !(await keepsAnAdmin(email))) throw new HTTPException(400, { message: 'Il faut garder au moins un administrateur.' });
+  const { rowCount } = await pool.query('update members set role = $2 where email = $1', [email, role]);
+  if (!rowCount) throw new HTTPException(404, { message: 'Utilisateur introuvable.' });
+  return c.json({ ok: true });
+});
+
+/** Nouveau lien d'activation (renvoyé par e-mail en production). */
+app.post('/v1/admin/users/invite', async (c) => {
+  adminOnly(c);
+  const email = mailOf((await c.req.json().catch(() => ({})) as { email?: string }).email);
+  const { rows: [m] } = await pool.query<{ active: boolean }>('select activated_at is not null as active from members where email = $1', [email]);
+  if (!m) throw new HTTPException(404, { message: 'Utilisateur introuvable.' });
+  if (m.active) throw new HTTPException(400, { message: 'Cet accès est déjà actif.' });
+  return c.json(await issueInvite(c, email));
+});
+
+app.post('/v1/admin/users/remove', async (c) => {
+  adminOnly(c);
+  const email = mailOf((await c.req.json().catch(() => ({})) as { email?: string }).email);
+  if (email === c.get('email')) throw new HTTPException(400, { message: 'Vous ne pouvez pas retirer votre propre accès.' });
+  if (!(await keepsAnAdmin(email))) throw new HTTPException(400, { message: 'Il faut garder au moins un administrateur.' });
+  const { rowCount } = await pool.query('delete from members where email = $1', [email]);
+  if (!rowCount) throw new HTTPException(404, { message: 'Utilisateur introuvable.' });
+  return c.json({ ok: true });
+});
 
 // —— Base de données : événements ——
+/* Événements : l'administrateur voit tout ; les autres seulement ceux qui leur sont attribués.
+   `allowed` (absent pour l'administrateur) permet à l'appareil de retirer ce qui ne lui est plus attribué.
+   `ids` : lecture complète de quelques événements (par exemple tout juste attribués, donc plus anciens que la dernière lecture). */
 app.get('/v1/events', async (c) => {
   const since = c.req.query('since');
   const from = since && !Number.isNaN(Date.parse(since)) ? since : '1970-01-01T00:00:00Z';
+  const only = (c.req.query('ids') ?? '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 200);
+  const scope = c.get('scope');
   const { rows } = await pool.query(
     `select id, meta, data, to_char(updated_at at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') as updated_at
-       from events where updated_at > $1::timestamptz order by updated_at`, [from]);
-  return c.json({ rows });
+       from events
+      where ($2::text[] is null and updated_at > $1::timestamptz or id = any($2::text[]))
+        and ($3::text[] is null or id = any($3::text[]))
+      order by updated_at`, [from, only.length ? only : null, scope ?? null]);
+  return c.json({ rows, allowed: scope ?? null });
 });
 
 interface InRow { id: string; meta: unknown; data: unknown }
 app.put('/v1/events', async (c) => {
   const body = await c.req.json<{ rows?: InRow[] }>().catch(() => ({ rows: undefined }));
-  const rows = Array.isArray(body.rows) ? body.rows : [];
-  if (!rows.length) return c.json({ saved: 0 });
+  let rows = Array.isArray(body.rows) ? body.rows : [];
+  if (!rows.length) return c.json({ saved: 0, refused: [] });
   if (rows.length > 50 || rows.some((r) => typeof r?.id !== 'string' || !r.id || r.id.length > 100 || typeof r.meta !== 'object' || typeof r.data !== 'object')) {
     throw new HTTPException(400, { message: 'Données invalides.' });
+  }
+  // Hors administrateur : on n'écrit que dans ses événements. Un événement nouveau (inconnu du serveur) est accepté
+  // et attribué à la personne qui l'a créé ; un événement existant non attribué est refusé (l'appareil le retire).
+  const scope = c.get('scope');
+  let refused: string[] = [];
+  if (scope) {
+    const { rows: known } = await pool.query<{ id: string }>('select id from events where id = any($1::text[])', [rows.map((r) => r.id)]);
+    const exists = new Set(known.map((k) => k.id));
+    const created = rows.filter((r) => !exists.has(r.id)).map((r) => r.id);
+    refused = rows.filter((r) => exists.has(r.id) && !scope.includes(r.id)).map((r) => r.id);
+    rows = rows.filter((r) => !refused.includes(r.id));
+    if (created.length) {
+      await pool.query(`update members set event_ids = array(select distinct unnest(event_ids || $2::text[])) where email = $1`, [c.get('email'), created]);
+    }
+    if (!rows.length) return c.json({ saved: 0, refused });
   }
   // Une seule instruction : un seul identifiant de transaction (txid) pour le temps réel.
   const { rows: out } = await pool.query<{ txid: string }>(
@@ -114,12 +345,17 @@ app.put('/v1/events', async (c) => {
      on conflict (id) do update set meta = excluded.meta, data = excluded.data, updated_at = excluded.updated_at, updated_by = excluded.updated_by
      returning pg_current_xact_id()::text as txid`,
     [JSON.stringify(rows), c.get('userId')]);
-  return c.json({ saved: out.length, txid: out[0]?.txid });
+  return c.json({ saved: out.length, txid: out[0]?.txid, refused });
 });
 
-// —— Temps réel : la plateforme est prévenue dès qu'un événement change ailleurs ——
-app.post('/v1/events/live', async (c) =>
-  c.json(await realtime.seal({ query: rawSql<{ id: string; updated_at: string }>('SELECT id, updated_at FROM events') })));
+// —— Temps réel : la plateforme est prévenue dès qu'un de SES événements change ailleurs ——
+app.post('/v1/events/live', async (c) => {
+  const scope = c.get('scope');
+  const query = scope
+    ? rawSql<{ id: string; updated_at: string }>('SELECT id, updated_at FROM events WHERE id = ANY(string_to_array($1, chr(31)))', [scope.join('\u001f')])
+    : rawSql<{ id: string; updated_at: string }>('SELECT id, updated_at FROM events');
+  return c.json(await realtime.seal({ query }));
+});
 
 // —— Conversations avec Sonia : privées, une par personne et par événement, synchronisées entre ses appareils ——
 interface ChatMsg { uid: string; at: number; t?: number; [k: string]: unknown }
@@ -359,14 +595,14 @@ app.post('/public/ai', async (c) => {
   if (!PUBLIC_AI) throw new HTTPException(404, { message: 'Non disponible.' });
   const origin = c.req.header('origin') ?? '';
   if (!origins.includes(origin)) throw new HTTPException(403, { message: 'Origine non autorisée.' });
-  const ip = (c.req.header('x-forwarded-for') ?? '').split(',')[0].trim() || c.req.header('x-real-ip') || 'inconnue';
+  const ip = ipOf(c);
   const { rows } = await pool.query<{ mine: number; total: number }>(
     `with up as (
        insert into ai_usage (day, ip, n) values (current_date, $1, 1)
        on conflict (day, ip) do update set n = ai_usage.n + 1 returning n)
      select (select n from up) as mine, (select coalesce(sum(n), 0)::int from ai_usage where day = current_date) + 1 as total`, [ip]);
-  if ((rows[0]?.mine ?? 0) > PER_IP_DAY) throw new HTTPException(429, { message: `Limite d’essai atteinte pour aujourd’hui (${PER_IP_DAY} questions). Créez un compte pour continuer.` });
-  if ((rows[0]?.total ?? 0) > ALL_DAY) throw new HTTPException(429, { message: 'Sonia a atteint sa limite d’essais pour aujourd’hui. Réessayez demain ou créez un compte.' });
+  if ((rows[0]?.mine ?? 0) > PER_IP_DAY) throw new HTTPException(429, { message: `Limite d’essai atteinte pour aujourd’hui (${PER_IP_DAY} questions). Connectez-vous (sur invitation de l’administrateur) pour continuer.` });
+  if ((rows[0]?.total ?? 0) > ALL_DAY) throw new HTTPException(429, { message: 'Sonia a atteint sa limite d’essais pour aujourd’hui. Réessayez demain ou connectez-vous.' });
   return answerAi(c as unknown as Context<{ Variables: Vars }>, true);
 });
 

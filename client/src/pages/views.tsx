@@ -1,4 +1,4 @@
-import { Mail, MessageCircle, Smartphone, Link2, Check, Plus, CalendarDays, CalendarPlus, List, ChevronRight, FileText, Pencil, ReceiptText, Trash2, Download, Loader2, ChevronDown, Search, BriefcaseBusiness } from 'lucide-react';
+import { Mail, MessageCircle, Smartphone, Link2, UsersRound, Check, Plus, CalendarDays, CalendarPlus, List, ChevronRight, FileText, Pencil, ReceiptText, Trash2, Download, Loader2, ChevronDown, Search, BriefcaseBusiness, UserPlus } from 'lucide-react';
 import { ChipMenu, contactLinks, initials, stageStyle } from './providers-ui';
 import CommCalendar, { ChannelFilter, CommActions, useChannelFilter } from './CommCalendar';
 import CommModal from '../components/CommModal';
@@ -14,10 +14,11 @@ import ExpenseModal from '../components/ExpenseModal';
 import BudgetLineModal from '../components/BudgetLineModal';
 import { DateFilterBar, useDateFilter } from '../components/DateFilter';
 import { exportExpenses } from '../exportExpenses';
-import PaymentBadge from '../components/PaymentBadge';
+import PaymentBadge, { ProviderBadge } from '../components/PaymentBadge';
 import { downloadSheet, slug } from '../excel';
 import { allSubtasks, detailOf, fmtDate, isLate, uid, stagesFor, billingStatuses, type Billing, type BudgetLine, type CommItem, type Expense, type Lead, type ProviderStage, type Stage, type Subtask, type Task, type TaskStatus, providerStages } from '../demo';
 import { useEvents } from '../events';
+import { PlatformUsers, useIsAdmin } from '../components/CloudAccount';
 
 /** Message affiché quand l'événement actif n'a encore aucune donnée dans ce module. */
 function Empty({ children }: { children: ReactNode }) {
@@ -266,7 +267,8 @@ const withStatus = (t: Task, status: TaskStatus): Task => {
 };
 
 function TaskTimeline({ tasks }: { tasks: Task[] }) {
-  const { updateTask } = useEvents();
+  const { updateTask, data } = useEvents();
+  const teamName = (t: Task) => data.teams.find((x) => x.id === t.team)?.name;
   const [toast, setToast] = useState('');
   const setStatus = (t: Task, v: string) => {
     if (v === t.status) return;
@@ -289,9 +291,15 @@ function TaskTimeline({ tasks }: { tasks: Task[] }) {
           <div className="tile p-5 grid md:grid-cols-[1fr_auto] gap-3 items-center relative">
             <Link to={`/taches/${t.id}`} aria-label={`Ouvrir la tâche ${t.title}`} className="absolute inset-0 rounded-[inherit] focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-400" />
             <div>
-              <div className="eyebrow text-brand-800">{fmtDate(t.due)} · {t.owner}{t.phases.length > 0 && ` · ${t.phases.length} phase${t.phases.length > 1 ? 's' : ''}`}{!!t.loose?.length && ` · ${t.loose.length} sans phase`}</div>
+              <div className="eyebrow text-brand-800">{fmtDate(t.due)}{t.owner && ` · ${t.owner}`}{t.phases.length > 0 && ` · ${t.phases.length} phase${t.phases.length > 1 ? 's' : ''}`}{!!t.loose?.length && ` · ${t.loose.length} sans phase`}</div>
               <div className="font-semibold text-lg mt-1">{t.title}</div>
-              {t.dependsOn && <div className="text-xs text-ink-500 mt-1.5 flex items-center gap-1"><Link2 size={12} /> Après : {t.dependsOn}</div>}
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1.5">
+                {/* Équipe chargée de la tâche (menu Équipe) ; à choisir dans la fiche si elle manque. */}
+                {teamName(t)
+                  ? <span className="text-[11px] font-semibold px-2.5 py-1 rounded-full bg-brand-50 text-brand-800 flex items-center gap-1"><UsersRound size={12} /> {teamName(t)}</span>
+                  : <span className="text-[11px] font-medium px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 ring-1 ring-amber-200 flex items-center gap-1"><UsersRound size={12} /> Sans équipe</span>}
+                {t.dependsOn && <span className="text-xs text-ink-500 flex items-center gap-1"><Link2 size={12} /> Après : {t.dependsOn}</span>}
+              </div>
               <div className="h-1.5 rounded-full bg-ink-100 mt-3 max-w-md overflow-hidden"><div className="h-full bg-brand-500 rounded-full" style={{ width: `${t.progress}%` }} /></div>
             </div>
             <div className="relative z-10 w-fit flex items-center gap-2">
@@ -469,6 +477,7 @@ function AllExpenses({ budget, eventName, onEdit, onDelete }: {
   const [only, setOnly] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
   const dates = useDateFilter();
+  const { data: { providers } } = useEvents();
   const lines = budget.filter((b) => b.expenses?.length);
   const all = lines.flatMap((b) => (b.expenses ?? []).map((e) => ({ ...e, poste: b.label }))).sort((a, b) => b.date.localeCompare(a.date));
   // Le poste filtré a pu perdre toutes ses dépenses : on revient alors à « Tous ».
@@ -485,7 +494,7 @@ function AllExpenses({ budget, eventName, onEdit, onDelete }: {
       ? new Date(dates.month + '-01T00:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })
       : dates.active ? `du ${dates.from ? fmtDate(dates.from) : '…'} au ${dates.to ? fmtDate(dates.to) : '…'}` : 'toutes dates';
     setExporting(true); setExportError('');
-    try { await exportExpenses(shown, eventName, `${current ?? 'tous les postes'} · ${period}`); }
+    try { await exportExpenses(shown.map((e) => ({ ...e, providerName: providers.find((p) => p.id === e.provider)?.name })), eventName, `${current ?? 'tous les postes'} · ${period}`); }
     catch { setExportError('L’export a échoué. Réessayez.'); }
     finally { setExporting(false); }
   };
@@ -551,6 +560,7 @@ function AllExpenses({ budget, eventName, onEdit, onDelete }: {
                   <span className="flex flex-wrap items-center gap-1.5 mt-0.5">
                     <span className="md:hidden text-xs text-ink-500 tabular-nums">{fmtDate(e.date)}</span>
                     <PaymentBadge e={e} />
+                    <ProviderBadge e={e} />
                     {!current && <span className="inline-block text-[11px] font-medium px-2 py-0.5 rounded-full bg-[var(--sand)] text-brand-900">{e.poste}</span>}
                   </span>
                 </td>
@@ -559,7 +569,7 @@ function AllExpenses({ budget, eventName, onEdit, onDelete }: {
                 <td className="px-2 sm:px-3 py-3 text-right tabular-nums whitespace-nowrap"><span className="block font-semibold text-base">{fmt(e.amount)}</span><span className="sm:hidden block text-[11px] text-ink-500">{d.qty.toLocaleString('fr-FR')} × {fmt(d.unit)}</span></td>
                 <td className="px-1 sm:px-2 py-3">
                   <div className="flex items-center justify-end">
-                    <button type="button" onClick={() => onEdit(e.poste, { id: e.id, label: e.label, amount: e.amount, qty: e.qty, unitPrice: e.unitPrice, date: e.date, payment: e.payment, paidOn: e.paidOn })} aria-label={`Modifier la dépense ${e.label}`} title="Modifier la dépense"
+                    <button type="button" onClick={() => onEdit(e.poste, { id: e.id, label: e.label, amount: e.amount, qty: e.qty, unitPrice: e.unitPrice, date: e.date, payment: e.payment, paidOn: e.paidOn, provider: e.provider })} aria-label={`Modifier la dépense ${e.label}`} title="Modifier la dépense"
                       className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-ink-400 hover:text-brand-900 hover:bg-ink-100 transition"><Pencil size={15} /></button>
                     <button type="button" onClick={() => setConfirm(e.id)} aria-label={`Supprimer la dépense ${e.label}`} title="Supprimer la dépense"
                       className="w-9 h-9 shrink-0 rounded-full grid place-items-center text-ink-400 hover:text-red-700 hover:bg-red-50 transition"><Trash2 size={15} /></button>
@@ -775,6 +785,9 @@ export function CommunicationView() {
 /** Équipes de l'événement actif : un clic ouvre le dossier de l'équipe (membres et responsabilités). */
 export function TeamsView() {
   const { current, data: { teams }, addTeam, updateTeam } = useEvents();
+  // Utilisateurs de la plateforme : visibles et modifiables par l'administrateur seulement.
+  const admin = useIsAdmin();
+  const [addingUser, setAddingUser] = useState(false);
   const [openId, setOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState(false); // modification de l'équipe ouverte (openId)
@@ -875,6 +888,11 @@ export function TeamsView() {
           <button type="button" onClick={() => setCreating(true)} style={{ ['--fx' as string]: '#00131a', ['--fx-o' as string]: 0.16 }} className="tile-fx fx-sm flex items-center gap-2.5 px-5 py-3.5 rounded-2xl text-sm font-semibold bg-brand-500 text-white shadow-[0_10px_24px_-10px_rgba(0,163,204,.45)]">
             <Plus size={18} /> Ajouter une équipe
           </button>
+          {admin && (
+            <button type="button" onClick={() => setAddingUser(true)} className="flex items-center gap-2.5 px-5 py-3.5 rounded-2xl text-sm font-semibold bg-white text-brand-900 ring-1 ring-ink-200 hover:ring-brand-400 transition">
+              <UserPlus size={18} /> Ajouter un utilisateur
+            </button>
+          )}
         </div>
       </div>
       {exportError && <p role="alert" className="text-sm text-red-700 text-right">{exportError}</p>}
@@ -960,6 +978,7 @@ export function TeamsView() {
     <TeamModal teamId={openId} onClose={close} onDeleted={deleted} onEdit={() => setEditing(true)} hidden={!!editedTeam} />
     <NewTeamModal open={creating || !!editedTeam} eventName={current.name} existing={teams.map((t) => t.name)}
       initial={editedTeam && { name: editedTeam.name, lead: editedTeam.lead }} onClose={closeNew} onCreate={create} />
+    {admin && <PlatformUsers adding={addingUser} onAddDone={() => setAddingUser(false)} />}
     {toast && (
       <div role="status" className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-brand-950 text-white text-sm px-5 py-3 rounded-full shadow-xl">
         <Check size={16} className="text-accent-400" /> {toast}
