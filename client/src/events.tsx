@@ -21,6 +21,8 @@ export interface PlatformEvent {
   budget: string;
   owner: string;
   attendees: string;
+  /** Supprimé (date de la suppression) : caché partout, mais gardé en base pour pouvoir être récupéré par l'administrateur. */
+  deleted?: string;
 }
 
 /* Données d'EXEMPLE (local et test seulement). La production démarre vide : aucun événement fictif n'y est jamais envoyé. */
@@ -47,6 +49,8 @@ export interface EventsState {
   /** Crée un événement ; `initial` remplit son espace (prestataires, sponsors…). */
   add: (e: Omit<PlatformEvent, 'id'>, initial?: Partial<EventData>) => PlatformEvent;
   update: (id: string, patch: Omit<PlatformEvent, 'id'>) => void;
+  /** Supprime un événement (caché pour toute l'équipe, données gardées en base). */
+  remove: (id: string) => void;
   /** Ajoute une tâche à l'événement ACTIF. */
   addTask: (t: NewTask) => Task;
   /** Modifie une tâche de l'événement ACTIF ; avancement et statut sont recalculés. */
@@ -63,12 +67,16 @@ export interface EventsState {
   addProvider: (p: Omit<Provider, 'id' | 'docs'>) => Provider;
   /** Modifie un prestataire de l'événement ACTIF (statut, dossier…). */
   updateProvider: (id: string, change: (p: Provider) => Provider) => void;
+  /** Supprime un prestataire de l'événement ACTIF ; les dépenses qui lui étaient liées restent, sans prestataire. */
+  removeProvider: (id: string) => void;
   /** Ajoute une dépense à un poste du budget de l'événement ACTIF (créé s'il n'existe pas, avec son montant prévu). */
   addExpense: (poste: string, e: Expense, planned?: number) => void;
   /** Remplace une dépense de l'événement ACTIF ; elle peut changer de poste (créé s'il n'existe pas). */
   updateExpense: (from: string, e: Expense, to: string, planned?: number) => void;
   /** Supprime une dépense d'un poste de l'événement ACTIF ; son montant est retiré du total dépensé. */
   removeExpense: (poste: string, id: string) => void;
+  /** Supprime un poste du budget de l'événement ACTIF, avec toutes ses dépenses. */
+  removeBudgetLine: (label: string) => void;
   /** Ajoute une équipe à l'événement ACTIF. */
   addTeam: (t: Team) => void;
   /** Supprime une équipe (et ses membres) de l'événement ACTIF. */
@@ -235,7 +243,9 @@ export function EventsProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<EventsState>(() => {
     // Aucun événement (personne à qui rien n'est encore attribué) : un événement vide, jamais enregistré ni envoyé.
-    const current = events.find((e) => e.id === currentId) ?? events[0] ?? NO_EVENT;
+    // Les événements supprimés restent dans la liste interne (pour être envoyés au serveur), mais ne sont montrés nulle part.
+    const visible = events.filter((e) => !e.deleted);
+    const current = visible.find((e) => e.id === currentId) ?? visible[0] ?? NO_EVENT;
     // Toute écriture de tâche vise l'événement actif, jamais un autre.
     const setTasks = (fn: (list: Task[]) => Task[]) => setDataById((d) => {
       const cur = d[current.id] ?? emptyEventData();
@@ -247,7 +257,7 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       return { ...d, [current.id]: { ...cur, communication: fn(cur.communication) } };
     });
     return {
-    events,
+    events: visible,
     current,
     data: dataById[current.id] ?? emptyEventData(),
     select: setCurrentId,
@@ -259,6 +269,10 @@ export function EventsProvider({ children }: { children: ReactNode }) {
       return created;
     },
     update: (id, patch) => setEvents((list) => list.map((e) => (e.id === id ? { ...patch, id } : e))),
+    remove: (id) => {
+      setEvents((list) => list.map((e) => (e.id === id ? { ...e, deleted: new Date().toISOString() } : e)));
+      if (current.id === id) setCurrentId(visible.find((e) => e.id !== id)?.id ?? '');
+    },
     addTask: (t) => {
       const created: Task = syncTask({ ...t, id: `${current.id}-${uid()}`, phases: [] });
       setTasks((list) => [...list, created]);
@@ -280,6 +294,16 @@ export function EventsProvider({ children }: { children: ReactNode }) {
     updateProvider: (id, change) => setDataById((d) => {
       const cur = d[current.id] ?? emptyEventData();
       return { ...d, [current.id]: { ...cur, providers: cur.providers.map((p) => (p.id === id ? change(p) : p)) } };
+    }),
+    removeBudgetLine: (label) => setDataById((d) => {
+      const cur = d[current.id] ?? emptyEventData();
+      return { ...d, [current.id]: { ...cur, budget: cur.budget.filter((b) => b.label !== label) } };
+    }),
+    removeProvider: (id) => setDataById((d) => {
+      const cur = d[current.id] ?? emptyEventData();
+      const budget = cur.budget.map((l) => (l.expenses?.some((e) => e.provider === id)
+        ? { ...l, expenses: l.expenses.map((e) => (e.provider === id ? { ...e, provider: undefined } : e)) } : l));
+      return { ...d, [current.id]: { ...cur, providers: cur.providers.filter((p) => p.id !== id), budget } };
     }),
     addExpense: (poste, e, planned) => setDataById((d) => {
       const cur = d[current.id] ?? emptyEventData();

@@ -10,6 +10,7 @@ import { commChannels, paymentStatuses, providerStages, billingStatuses, sponsor
 import { participantStages } from '../wmt';
 import { SPEAKER_STATUSES } from '../programme';
 import { syntheseFor } from './synthese';
+import { emptyEvaluation } from '../evaluation';
 import { BADGE_CATEGORIES, newToken, nextNumber, type BadgeCategory } from '../accreditation';
 
 export interface ProposedAction { id: string; name: string; args: Record<string, unknown> }
@@ -109,6 +110,19 @@ export const ACTIONS: Record<string, Def> = {
     run: (a, s) => s.select(findOne(s.events, (e) => e.name, a.name, 'Événement').id),
   },
 
+  supprimer_evenement: {
+    description: 'Supprime un événement entier (tâches, budget, contacts, programme, badges… compris), désigné par son nom exact. Il disparaît pour toute l’équipe.',
+    parameters: obj({ name: str('Nom exact de l’événement (liste « evenements »)') }, ['name']),
+    summary: (a, s) => {
+      const e = findOne(s.events, (x) => x.name, a.name, 'Événement');
+      const d = e.id === s.current.id ? s.data : undefined;
+      const detail = d ? ` : ${[many(d.tasks.length, 'tâche', 'tâches'), many(d.budget.length, 'poste de budget', 'postes de budget'), many(d.providers.length, 'prestataire', 'prestataires'),
+        many(d.partners.length + d.sponsors.length, 'partenaire ou sponsor', 'partenaires et sponsors'), many(d.programme.length, 'session', 'sessions'), many(d.badges.length, 'badge', 'badges')].join(', ')}` : '';
+      return `Supprimer l’événement « ${e.name} » (${day(e.start)} → ${day(e.end)}) et toutes ses données${detail}.\nIl disparaîtra pour toute l’équipe.`;
+    },
+    run: (a, s) => s.remove(findOne(s.events, (x) => x.name, a.name, 'Événement').id),
+  },
+
   // —— Tâches ——
   ajouter_taches: {
     description: 'Ajoute une ou plusieurs tâches, avec leurs phases et sous-tâches si elles sont données.',
@@ -167,6 +181,29 @@ export const ACTIONS: Record<string, Def> = {
     run: (a, s) => { for (const t of (a.tasks ?? []).map((n: unknown) => taskNamed(s, n))) s.removeTask(t.id); },
   },
 
+  supprimer_sous_taches: {
+    description: 'Supprime des sous-tâches et/ou des phases entières d’une tâche (l’avancement se recalcule). Tout est désigné par son intitulé exact.',
+    parameters: obj({ task: str('Intitulé exact de la tâche'), subtasks: { type: 'array', items: { type: 'string' }, description: 'Intitulés exacts des sous-tâches à supprimer' },
+      phases: { type: 'array', items: { type: 'string' }, description: 'Noms exacts des phases à supprimer (avec leurs sous-tâches)' } }, ['task']),
+    summary: (a, s) => {
+      const task = taskNamed(s, a.task);
+      const all = [...task.phases.flatMap((p) => p.subtasks), ...(task.loose ?? [])];
+      const ph = (a.phases ?? []).map((n: unknown) => findOne(task.phases, (x) => x.title, n, 'Phase'));
+      const st = (a.subtasks ?? []).map((n: unknown) => findOne(all, (x) => x.title, n, 'Sous-tâche'));
+      need(ph.length || st.length, 'Aucune sous-tâche ni phase désignée.');
+      return `Dans la tâche « ${task.title} », supprimer :\n${bullet([...ph.map((p: { title: string; subtasks: unknown[] }) => `la phase « ${p.title} » (${many(p.subtasks.length, 'sous-tâche', 'sous-tâches')})`), ...st.map((x: { title: string }) => x.title)], 20)}`;
+    },
+    run: (a, s) => {
+      const task = taskNamed(s, a.task);
+      const all = [...task.phases.flatMap((p) => p.subtasks), ...(task.loose ?? [])];
+      const phases = new Set((a.phases ?? []).map((n: unknown) => findOne(task.phases, (x) => x.title, n, 'Phase').id));
+      const subs = new Set((a.subtasks ?? []).map((n: unknown) => findOne(all, (x) => x.title, n, 'Sous-tâche').id));
+      need(phases.size || subs.size, 'Aucune sous-tâche ni phase désignée.');
+      s.updateTask(task.id, (t) => ({ ...t, phases: t.phases.filter((p) => !phases.has(p.id)).map((p) => ({ ...p, subtasks: p.subtasks.filter((x) => !subs.has(x.id)) })),
+        loose: t.loose?.filter((x) => !subs.has(x.id)) }));
+    },
+  },
+
   // —— Communication ——
   ajouter_publications: {
     description: 'Planifie des publications dans le calendrier de communication.',
@@ -209,6 +246,35 @@ export const ACTIONS: Record<string, Def> = {
     },
   },
 
+  supprimer_prestataires: {
+    description: 'Supprime des prestataires (avec leur dossier : devis, commandes, factures), désignés par leur nom exact. Les dépenses liées restent, sans prestataire.',
+    parameters: obj({ names: list({ type: 'string' }, 'Noms exacts des prestataires à supprimer') }, ['names']),
+    summary: (a, s) => {
+      const found = (a.names ?? []).map((n: unknown) => providerNamed(s, n));
+      return `Supprimer ${many(found.length, 'prestataire', 'prestataires')} :\n${bullet(found.map((p: { name: string; category: string; status: string; docs: unknown[] }) => `${p.name} (${p.category}) — ${p.status}${p.docs.length ? `, ${many(p.docs.length, 'document', 'documents')} dans son dossier` : ''}`), 20)}`;
+    },
+    run: (a, s) => {
+      const found = (a.names ?? []).map((n: unknown) => providerNamed(s, n));
+      need(found.length, 'Aucun prestataire désigné.');
+      for (const p of found) s.removeProvider(p.id);
+    },
+  },
+
+  supprimer_documents_prestataire: {
+    description: 'Supprime des documents (devis, commandes, factures) du dossier d’un prestataire, désignés par leur référence exacte.',
+    parameters: obj({ provider: str('Nom exact du prestataire'), refs: list({ type: 'string' }, 'Références exactes des documents') }, ['provider', 'refs']),
+    summary: (a, s) => {
+      const p = providerNamed(s, a.provider);
+      const docs = (a.refs ?? []).map((r: unknown) => findOne(p.docs, (d) => d.ref, r, 'Document'));
+      return `Supprimer du dossier de « ${p.name} » :\n${bullet(docs.map((d: { kind: string; ref: string; amount: number; date: string }) => `${d.kind} ${d.ref} — ${usd(d.amount)}, ${day(d.date)}`), 20)}`;
+    },
+    run: (a, s) => {
+      const p = providerNamed(s, a.provider);
+      const ids = new Set((a.refs ?? []).map((r: unknown) => findOne(p.docs, (d) => d.ref, r, 'Document').id));
+      s.updateProvider(p.id, (x) => ({ ...x, docs: x.docs.filter((d) => !ids.has(d.id)) }));
+    },
+  },
+
   // —— Budget ——
   ajouter_depenses: {
     description: 'Ajoute des dépenses à un poste du budget (le poste est créé s’il n’existe pas).',
@@ -244,6 +310,16 @@ export const ACTIONS: Record<string, Def> = {
       const e = findOne((line.expenses ?? []).filter((x) => !isDate(a.date) || x.date === a.date), (x) => x.label, a.label, 'Dépense', 'la page Budget');
       s.removeExpense(line.label, e.id);
     },
+  },
+
+  supprimer_postes: {
+    description: 'Supprime des postes du budget, avec toutes leurs dépenses, désignés par leur nom exact.',
+    parameters: obj({ postes: list({ type: 'string' }, 'Noms exacts des postes') }, ['postes']),
+    summary: (a, s) => {
+      const found = (a.postes ?? []).map((n: unknown) => findOne(s.data.budget, (b) => b.label, n, 'Poste de budget', 'la page Budget'));
+      return `Supprimer ${many(found.length, 'poste de budget', 'postes de budget')} :\n${bullet(found.map((b: { label: string; planned: number; spent: number; expenses?: unknown[] }) => `${b.label} — prévu ${usd(b.planned)}, dépensé ${usd(b.spent)}${b.expenses?.length ? ` (${many(b.expenses.length, 'dépense supprimée', 'dépenses supprimées')} aussi)` : ''}`), 20)}`;
+    },
+    run: (a, s) => { for (const b of (a.postes ?? []).map((n: unknown) => findOne(s.data.budget, (x) => x.label, n, 'Poste de budget', 'la page Budget'))) s.removeBudgetLine(b.label); },
   },
 
   // —— Partenaires et sponsors ——
@@ -326,6 +402,21 @@ export const ACTIONS: Record<string, Def> = {
     parameters: obj({ team: str('Nom exact de l’équipe') }, ['team']),
     summary: (a, s) => { const t = teamNamed(s, a.team); return `Supprimer l’équipe « ${t.name} » et ses ${many(t.members.length, 'membre', 'membres')}.`; },
     run: (a, s) => s.removeTeam(teamNamed(s, a.team).id),
+  },
+
+  retirer_membres: {
+    description: 'Retire des membres d’une équipe, désignés par leur nom exact.',
+    parameters: obj({ team: str('Nom exact de l’équipe'), members: list({ type: 'string' }, 'Noms exacts des membres à retirer') }, ['team', 'members']),
+    summary: (a, s) => {
+      const team = teamNamed(s, a.team);
+      const found = (a.members ?? []).map((n: unknown) => findOne(team.members, (m) => m.name, n, 'Membre'));
+      return `Retirer de l’équipe « ${team.name} » :\n${bullet(found.map((m: { name: string; role: string }) => `${m.name} — ${m.role || 'sans rôle'}`), 20)}`;
+    },
+    run: (a, s) => {
+      const team = teamNamed(s, a.team);
+      const ids = new Set((a.members ?? []).map((n: unknown) => findOne(team.members, (m) => m.name, n, 'Membre').id));
+      s.updateTeam(team.id, (t) => ({ ...t, members: t.members.filter((m) => !ids.has(m.id)) }));
+    },
   },
 
   // —— Programme ——
@@ -429,6 +520,56 @@ export const ACTIONS: Record<string, Def> = {
       const add = l.map((p) => ({ id: uid(), name: text(p.name), organisation: text(p.organisation), email: text(p.email), programId: findOne(s.data.wmt.programs, (x) => x.name, p.program, 'Programme').id, status: pick(p.status, participantStages, 'Candidature') }));
       s.updateWmt((w) => ({ ...w, participants: [...w.participants, ...add] }));
     },
+  },
+  supprimer_participantes: {
+    description: 'Supprime des participantes inscrites aux programmes Women in MiningTech ou Academy, désignées par leur nom exact.',
+    parameters: obj({ names: list({ type: 'string' }, 'Noms exacts des participantes') }, ['names']),
+    summary: (a, s) => {
+      const found = (a.names ?? []).map((n: unknown) => findOne(s.data.wmt.participants, (p) => p.name, n, 'Participante', 'la page Women in MiningTech'));
+      return `Supprimer ${many(found.length, 'participante', 'participantes')} :\n${bullet(found.map((p: { name: string; programId: string }) => `${p.name} — ${s.data.wmt.programs.find((x) => x.id === p.programId)?.name ?? 'sans programme'}`), 20)}`;
+    },
+    run: (a, s) => {
+      const ids = new Set((a.names ?? []).map((n: unknown) => findOne(s.data.wmt.participants, (p) => p.name, n, 'Participante', 'la page Women in MiningTech').id));
+      s.updateWmt((w) => ({ ...w, participants: w.participants.filter((p) => !ids.has(p.id)) }));
+    },
+  },
+  supprimer_programmes_wmt: {
+    description: 'Supprime des programmes Women in MiningTech ou Academy (avec leurs participantes et leurs sessions), désignés par leur nom exact.',
+    parameters: obj({ names: list({ type: 'string' }, 'Noms exacts des programmes (wmt.programs)') }, ['names']),
+    summary: (a, s) => {
+      const found = (a.names ?? []).map((n: unknown) => findOne(s.data.wmt.programs, (p) => p.name, n, 'Programme', 'la page Women in MiningTech'));
+      return `Supprimer ${many(found.length, 'programme', 'programmes')} :\n${bullet(found.map((p: { id: string; name: string }) => `${p.name} — avec ${many(s.data.wmt.participants.filter((x) => x.programId === p.id).length, 'participante', 'participantes')} et ${many(s.data.wmt.sessions.filter((x) => x.programId === p.id).length, 'session', 'sessions')}`), 20)}`;
+    },
+    run: (a, s) => {
+      const ids = new Set((a.names ?? []).map((n: unknown) => findOne(s.data.wmt.programs, (p) => p.name, n, 'Programme', 'la page Women in MiningTech').id));
+      s.updateWmt((w) => ({ programs: w.programs.filter((p) => !ids.has(p.id)), participants: w.participants.filter((p) => !ids.has(p.programId)), sessions: w.sessions.filter((p) => !ids.has(p.programId)) }));
+    },
+  },
+  supprimer_sessions_wmt: {
+    description: 'Supprime des sessions (ateliers, cours) des programmes Women in MiningTech ou Academy, désignées par leur titre exact.',
+    parameters: obj({ titles: list({ type: 'string' }, 'Titres exacts des sessions (wmt.sessions)') }, ['titles']),
+    summary: (a, s) => {
+      const found = (a.titles ?? []).map((n: unknown) => findOne(s.data.wmt.sessions, (p) => p.title, n, 'Session', 'la page Women in MiningTech'));
+      return `Supprimer ${many(found.length, 'session', 'sessions')} :\n${bullet(found.map((p: { title: string; date: string; time: string }) => `${p.title} — ${day(p.date)}${p.time ? ` à ${p.time}` : ''}`), 20)}`;
+    },
+    run: (a, s) => {
+      const ids = new Set((a.titles ?? []).map((n: unknown) => findOne(s.data.wmt.sessions, (p) => p.title, n, 'Session', 'la page Women in MiningTech').id));
+      s.updateWmt((w) => ({ ...w, sessions: w.sessions.filter((p) => !ids.has(p.id)) }));
+    },
+  },
+
+  // —— Habillage des badges et évaluation ——
+  retirer_habillage_badges: {
+    description: 'Retire l’habillage personnalisé des badges (image de fond, logo) : les badges reprennent le modèle standard CODES Africa.',
+    parameters: obj({ confirm: { type: 'boolean', description: 'Toujours vrai' } }),
+    summary: () => 'Retirer l’habillage personnalisé des badges (fond et logo) : retour au badge standard CODES Africa.',
+    run: (_a, s) => s.setBadgeTheme({}),
+  },
+  effacer_evaluation: {
+    description: 'Efface l’évaluation de l’événement actif (bilan général, participants réels, satisfaction et toutes les fiches d’évaluation).',
+    parameters: obj({ confirm: { type: 'boolean', description: 'Toujours vrai' } }),
+    summary: (_a, s) => `Effacer toute l’évaluation de « ${s.current.name} » (bilan général et ${many(Object.keys(s.data.evaluation.entries).length, 'fiche', 'fiches')}).`,
+    run: (_a, s) => s.updateEvaluation(() => emptyEvaluation()),
   },
 };
 
