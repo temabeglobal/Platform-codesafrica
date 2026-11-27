@@ -23,8 +23,9 @@ export interface PlatformEvent {
   attendees: string;
 }
 
-// Données d'EXEMPLE, remplacées par MongoDB ensuite.
-const seed: PlatformEvent[] = [
+/* Données d'EXEMPLE (local et test seulement). La production démarre vide : aucun événement fictif n'y est jamais envoyé. */
+const DEMO = import.meta.env.VITE_APP_ENV !== 'production'; // remplacé à la construction : les exemples disparaissent du site de production
+const demoEvents: PlatformEvent[] = [
   { id: 'ca-2027', name: 'CODES Africa 2027', start: '2027-03-15', end: '2027-03-17', place: 'Lubumbashi', type: 'Forum', color: '#0A86A8',
     reference: 'CA-CODE-2027-101', description: 'Forum annuel CODES Africa : mines, technologie et innovation.', budget: '120000', owner: 'Équipe organisation', attendees: '800' },
   { id: 'wmt-2027', name: 'Women in MiningTech 2027', start: '2027-06-10', end: '2027-06-11', place: 'Kolwezi', type: 'Conférence', color: '#6b1a12',
@@ -32,6 +33,7 @@ const seed: PlatformEvent[] = [
   { id: 'ca-2026', name: 'CODES Africa 2026', start: '2026-03-12', end: '2026-03-14', place: 'Lubumbashi', type: 'Forum', color: '#2f6fde',
     reference: 'CA-CODE-2026-103', description: 'Édition 2026 du forum CODES Africa.', budget: '100000', owner: 'Équipe organisation', attendees: '700' },
 ];
+const seed: PlatformEvent[] = DEMO ? demoEvents : [];
 
 /** Remplaçant quand aucun événement n'est attribué : il n'est dans aucune liste, donc jamais enregistré ni synchronisé. */
 export const NO_EVENT: PlatformEvent = { id: '__aucun__', name: 'Aucun événement', start: '', end: '', place: '', type: '', color: '#0A86A8', reference: '', description: '', budget: '', owner: '', attendees: '' };
@@ -115,9 +117,9 @@ function clearBackup() { try { localStorage.removeItem(BACKUP_KEY); } catch { /*
 
 export function EventsProvider({ children }: { children: ReactNode }) {
   const [events, setEvents] = useState<PlatformEvent[]>(seed);
-  const [currentId, setCurrentId] = useState(seed[0].id);
+  const [currentId, setCurrentId] = useState(seed[0]?.id ?? '');
   // Données rangées par événement : un module ne peut lire que celles de l'événement actif.
-  const [dataById, setDataById] = useState<Record<string, EventData>>(demoData);
+  const [dataById, setDataById] = useState<Record<string, EventData>>(DEMO ? demoData : {});
 
   // Synchronisation : l'état à jour est gardé dans une référence (lu pendant un envoi), sa copie dans l'état sert à l'affichage.
   const syncRef = useRef<SyncMeta>(emptySync());

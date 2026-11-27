@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { CalendarX2, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { CalendarPlus, CalendarX2, ChevronLeft, ChevronRight } from 'lucide-react';
+import EventModal, { type EventInput } from './EventModal';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import EnvBanner from './EnvBanner';
 import OfflineBanner from './OfflineBanner';
@@ -14,7 +15,15 @@ const tabIdle = 'text-white/80 hover:text-white hover:bg-white/10';
 
 export default function Layout() {
   const { pathname } = useLocation();
-  const { events } = useEvents();
+  const { events, add } = useEvents();
+  // Aucun événement (production neuve, ou rien d'attribué) : on peut créer le premier directement.
+  const [creating, setCreating] = useState(false);
+  const closeCreate = useCallback(() => setCreating(false), []);
+  const createEvent = (e: EventInput) => {
+    const { documents: _d, network, ...data } = e;
+    add(data, network);
+    setCreating(false);
+  };
   const current = moduleAt(pathname);
   const activeGroup = current?.group;
   // Dans une fiche (ex. une tâche), on masque les onglets du module : le bouton « Retour » suffit.
@@ -140,7 +149,11 @@ export default function Layout() {
           <div className="mx-auto max-w-md mt-10 bg-white rounded-3xl ring-1 ring-ink-200 p-8 text-center space-y-3">
             <span className="mx-auto w-12 h-12 rounded-full bg-[var(--sand)] grid place-items-center text-brand-700"><CalendarX2 size={22} /></span>
             <h1 className="font-display text-2xl text-brand-950">Aucun événement pour le moment</h1>
-            <p className="text-sm text-ink-600">Aucun événement ne vous est encore attribué. Demandez à l’administrateur de vous ajouter à un événement : il apparaîtra ici automatiquement.</p>
+            <p className="text-sm text-ink-600">Créez votre premier événement, ou demandez à l’administrateur de vous ajouter à un événement existant : il apparaîtra ici automatiquement.</p>
+            <button type="button" onClick={() => setCreating(true)} className="inline-flex items-center gap-2 mt-2 px-5 py-3 rounded-2xl text-sm font-semibold bg-brand-500 text-white hover:bg-brand-600">
+              <CalendarPlus size={18} /> Créer un événement
+            </button>
+            <EventModal open={creating} onClose={closeCreate} onSubmit={createEvent} />
           </div>
         )}
       </main>
