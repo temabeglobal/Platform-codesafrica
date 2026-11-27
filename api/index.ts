@@ -444,7 +444,10 @@ la personne les verra résumées et devra les autoriser. Dans ton texte, dis bri
 ne dis jamais que c'est déjà fait. Pour modifier ou supprimer, désigne chaque élément par son NOM exact tel qu'il figure dans le contexte (intitulé de tâche, nom d'équipe,
 de prestataire, de badge, thématique de session…), jamais par un identifiant interne.
 Dates au format AAAA-MM-JJ (année de l'événement si elle n'est pas précisée), heures HH:MM, montants en dollars, chiffres seulement.
-Ne demande JAMAIS de confirmation avant de proposer : la carte d'autorisation EST la confirmation. Toute action que tu proposes
+Ne demande JAMAIS de confirmation avant de proposer (« Souhaitez-vous que je… ? », « Dois-je… ? ») : la carte d'autorisation EST la confirmation.
+Un élément cité dans la demande n'a pas besoin d'exister déjà dans la plateforme : une tâche « Relancer le sponsor X » se crée même si X
+n'est pas dans la liste des sponsors ; une personne citée comme responsable se met telle quelle. Si la personne répond « oui », « vas-y »,
+« d'accord » à une de tes questions, propose aussitôt l'action concernée avec les outils. Toute action que tu proposes
 DOIT passer par un appel d'outil : n'écris jamais une liste d'actions en texte sans appeler les outils correspondants. Propose directement toutes les actions
 demandées, en un seul tour. Ne pose une question (courte) que s'il manque une information vraiment indispensable que tu ne peux pas déduire.
 Ne propose aucune action pour une simple question, une confidence, un remerciement ou une demande de conseil (« je suis débordée », « par quoi commencer ? ») : dans ces cas, réponds et PROPOSE en texte ; n'appelle un outil que si on te demande explicitement de créer, modifier, supprimer ou générer. N'appelle QUE les outils nécessaires à ce qui est demandé : jamais d'action supplémentaire
@@ -476,6 +479,18 @@ const finalReminder = (q: string, withTools: boolean) => [
   '- Réponse directe d’abord, chiffres et noms exacts tirés de « synthese » ; un chiffre se donne avec son repère (« 8 sur 17 », « 11 300 $ sur 31 500 $ ») ; dates en clair (« le 5 décembre »).',
   ...(withTools ? ['- Outils : seulement si le message demande explicitement de créer, modifier, supprimer ou générer quelque chose (ou corrige une proposition précédente, ex. « non, plutôt lundi »). Une question, un conseil, une confidence ou un merci → aucun outil.'] : []),
 ].join('\n');
+
+/* Le modèle répond parfois par une question (« Souhaitez-vous que je crée… ? ») ou annonce des actions en texte, au lieu d'appeler
+   les outils : la personne doit alors redemander. Dans ces cas, on lui redemande aussitôt, avec un appel d'outil obligatoire. */
+const ACTION_VERB = /\b(ajout\w*|cr[ée]+\w*|mets?|mettre|met[st]?ez|inscri\w*|enregistr\w*|supprim\w*|enl[eè]v\w*|retir\w*|modifi\w*|chang\w*|remplac\w*|d[ée]plac\w*|renomm\w*|programm\w*|planifi\w*|assign\w*|attribu\w*|affect\w*|marqu\w*|note[rz]?|fais|faites|g[ée]n[èée]r\w*|pr[ée]par\w*|add|create|remove|delete|change|update|put|set)\b/i;
+const YES = /^\s*(oui|ouais|ok|okay|d'?accord|vas-?y|allez-?y|fais-?le|faites-?le|go|confirm\w*|exact\w*|c'?est ([çc]a|bon|parfait)|parfait|yes|sure|bien s[uû]r|absolument|volontiers)\b/i;
+const ASKS_OK = /(souhaitez|voulez|voudriez|d[ée]sirez)-vous que je|(dois|puis)-je|je peux (le|la|les|vous)?\s*\w*\s*si vous|confirmez|est-ce que je (cr[ée]e|ajoute|mets)|voulez-vous que|souhaitez-vous (cr[ée]er|ajouter|que)|autoris|je (vous )?propose|voici (les|ce que)|valider/i;
+const mustAct = (q: string, reply: string, history: Turn[]) => {
+  if (/voulez-vous dire|lequel|laquelle|lesquel|pr[ée]cis(ez|er)|quel(le)?s? (est|sont|format|cat[ée]gorie|date|jour)/i.test(reply) && !ASKS_OK.test(reply)) return false;
+  const lastSonia = [...history].reverse().find((m) => m.role === 'assistant')?.content ?? '';
+  if (YES.test(q) && q.length < 80 && /\?\s*$|\?\s*\n|souhaitez|voulez|dois-je/i.test(lastSonia)) return true;
+  return ASKS_OK.test(reply) && (ACTION_VERB.test(q) || YES.test(q));
+};
 
 /** Phrase d'accompagnement quand le modèle propose des actions sans rien écrire. */
 const leadIn = (actions: { name: string }[]) => {
@@ -529,17 +544,26 @@ async function answerAi(c: Context<{ Variables: Vars }>, publicMode = false) {
   };
 
   if (ANTHROPIC_KEY) {
+    type Block = { type: string; text?: string; id?: string; name?: string; input?: unknown };
+    const ask = async (force: boolean) => {
     const r = await call('https://api.anthropic.com/v1/messages', { 'x-api-key': ANTHROPIC_KEY, 'anthropic-version': '2023-06-01' }, {
       model: SONIA_MODEL, max_tokens: maxTokens, system,
       messages: [...prior, { role: 'user', content: [
         ...images.map((u) => ({ type: 'image', source: { type: 'base64', media_type: u.slice(5, u.indexOf(';')), data: u.slice(u.indexOf(',') + 1) } })),
         { type: 'text', text: q },
       ] }],
-      ...(tools.length ? { tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })) } : {}),
+      ...(tools.length ? { tools: tools.map((t) => ({ name: t.name, description: t.description, input_schema: t.parameters })), ...(force ? { tool_choice: { type: 'any' } } : {}) } : {}),
     });
-    const out = await r.json().catch(() => ({})) as { content?: { type: string; text?: string; id?: string; name?: string; input?: unknown }[]; error?: { type?: string; message?: string } };
+    const out = await r.json().catch(() => ({})) as { content?: Block[]; error?: { type?: string; message?: string } };
     if (!r.ok) fail('Anthropic', r.status, out.error?.type, out.error?.message);
-    const blocks = out.content ?? [];
+    return out.content ?? [];
+    };
+    let blocks = await ask(false);
+    const said = () => blocks.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('');
+    if (tools.length && !blocks.some((b) => b.type === 'tool_use') && mustAct(q, said(), history)) {
+      const again = await ask(true);
+      if (again.some((b) => b.type === 'tool_use')) blocks = again;
+    }
     const actions: Proposed[] = blocks.filter((b) => b.type === 'tool_use').map((b) => ({ id: b.id ?? crypto.randomUUID(), name: b.name ?? '', args: parseArgs(b.input) }));
     return c.json({ text: blocks.filter((b) => b.type === 'text').map((b) => b.text ?? '').join('').trim() || leadIn(actions), actions, model: SONIA_MODEL });
   }
@@ -560,9 +584,10 @@ async function answerAi(c: Context<{ Variables: Vars }>, publicMode = false) {
     };
     let m = await ask('auto');
     // Le modèle annonce parfois des actions en texte sans appeler les outils : on lui redemande, outils obligatoires.
-    if (tools.length && !m?.tool_calls?.length && /autoris|je (vous )?propose|voici (les|ce que)|valider/i.test(m?.content ?? '')) {
+    if (tools.length && !m?.tool_calls?.length && mustAct(q, m?.content ?? '', history)) {
       const again = await ask('required');
-      if (again?.tool_calls?.length) m = { content: m?.content, tool_calls: again.tool_calls };
+      // Le texte d'origine (souvent une question) est remplacé par la phrase d'accompagnement des actions.
+      if (again?.tool_calls?.length) m = { content: again.content, tool_calls: again.tool_calls };
     }
     const actions: Proposed[] = (m?.tool_calls ?? []).map((t) => ({ id: t.id, name: t.function.name, args: parseArgs(t.function.arguments) }));
     return c.json({ text: (m?.content ?? '').trim() || leadIn(actions), actions, model: OPENAI_MODEL });
